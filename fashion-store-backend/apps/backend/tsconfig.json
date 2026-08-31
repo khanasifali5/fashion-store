@@ -25,7 +25,7 @@
   "include": [
     "**/*",
     ".medusa/types/*"
-  ],
+, "src/modules/mega-menu-promo/index.ts", "src/modules/mega-menu-promo/service.ts"  ],
   "exclude": [
     "node_modules",
     ".medusa/server",

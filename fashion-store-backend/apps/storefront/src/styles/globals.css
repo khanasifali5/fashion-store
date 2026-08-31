@@ -2,6 +2,47 @@
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
 
+@layer base {
+  html,
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-weight: 400;
+    font-style: normal;
+    letter-spacing: normal;
+    color: #000000;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  textarea,
+  select,
+  option {
+    font: inherit;
+    letter-spacing: inherit;
+  }
+
+  a,
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  p,
+  span,
+  label,
+  li,
+  dt,
+  dd,
+  th,
+  td {
+    font-family: inherit;
+  }
+}
+
 @layer utilities {
   /* Chrome, Safari and Opera */
   .no-scrollbar::-webkit-scrollbar {
@@ -13,17 +54,20 @@
   }
 
   .no-scrollbar {
-    -ms-overflow-style: none; /* IE and Edge */
-    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none;
+    scrollbar-width: none;
   }
 
   input:focus ~ label,
   input:not(:placeholder-shown) ~ label {
-    @apply -translate-y-2 text-xsmall-regular;
+    transform: translateY(-0.5rem);
+    font-size: 10px;
+    line-height: 1rem;
+    font-weight: 400;
   }
 
   input:focus ~ label {
-    @apply left-0;
+    left: 0;
   }
 
   input:-webkit-autofill,
@@ -51,62 +95,104 @@
 
 @layer components {
   .content-container {
-    @apply max-w-[1440px] w-full mx-auto px-6;
+    max-width: 1440px;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1.5rem;
+    padding-right: 1.5rem;
   }
 
   .contrast-btn {
-    @apply px-4 py-2 border border-black rounded-full hover:bg-black hover:text-white transition-colors duration-200 ease-in;
+    padding: 0.5rem 1rem;
+    border: 1px solid #000;
+    border-radius: 9999px;
+    transition:
+      background-color 200ms ease-in,
+      color 200ms ease-in,
+      border-color 200ms ease-in;
+  }
+
+  .contrast-btn:hover {
+    background-color: #000;
+    color: #fff;
   }
 
   .text-xsmall-regular {
-    @apply text-[10px] leading-4 font-normal;
+    font-size: 10px;
+    line-height: 1rem;
+    font-weight: 400;
   }
 
   .text-small-regular {
-    @apply text-xs leading-5 font-normal;
+    font-size: 0.75rem;
+    line-height: 1.25rem;
+    font-weight: 400;
   }
 
   .text-small-semi {
-    @apply text-xs leading-5 font-semibold;
+    font-size: 0.75rem;
+    line-height: 1.25rem;
+    font-weight: 600;
   }
 
   .text-base-regular {
-    @apply text-sm leading-6 font-normal;
+    font-size: 0.875rem;
+    line-height: 1.5rem;
+    font-weight: 400;
   }
 
   .text-base-semi {
-    @apply text-sm leading-6 font-semibold;
+    font-size: 0.875rem;
+    line-height: 1.5rem;
+    font-weight: 600;
   }
 
   .text-large-regular {
-    @apply text-base leading-6 font-normal;
+    font-size: 1rem;
+    line-height: 1.5rem;
+    font-weight: 400;
   }
 
   .text-large-semi {
-    @apply text-base leading-6 font-semibold;
+    font-size: 1rem;
+    line-height: 1.5rem;
+    font-weight: 600;
   }
 
   .text-xl-regular {
-    @apply text-2xl leading-[36px] font-normal;
+    font-size: 1.5rem;
+    line-height: 36px;
+    font-weight: 400;
   }
 
   .text-xl-semi {
-    @apply text-2xl leading-[36px] font-semibold;
+    font-size: 1.5rem;
+    line-height: 36px;
+    font-weight: 600;
   }
 
   .text-2xl-regular {
-    @apply text-[30px] leading-[48px] font-normal;
+    font-size: 30px;
+    line-height: 48px;
+    font-weight: 400;
   }
 
   .text-2xl-semi {
-    @apply text-[30px] leading-[48px] font-semibold;
+    font-size: 30px;
+    line-height: 48px;
+    font-weight: 600;
   }
 
   .text-3xl-regular {
-    @apply text-[32px] leading-[44px] font-normal;
+    font-size: 32px;
+    line-height: 44px;
+    font-weight: 400;
   }
 
   .text-3xl-semi {
-    @apply text-[32px] leading-[44px] font-semibold;
+    font-size: 32px;
+    line-height: 44px;
+    font-weight: 600;
   }
 }

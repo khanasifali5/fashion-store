@@ -1,105 +1,294 @@
+import { Fragment } from "react"
 import { notFound } from "next/navigation"
 import { Suspense } from "react"
 
-import InteractiveLink from "@modules/common/components/interactive-link"
+import { sdk } from "@lib/config"
+import { getAuthHeaders } from "@lib/data/cookies"
+import { OptionValueIds } from "@lib/util/product-option-filters"
+import { getCategoryIdsWithDescendants } from "@lib/data/categories"
+import { HttpTypes } from "@medusajs/types"
+import LocalizedClientLink from "@modules/common/components/localized-client-link"
 import SkeletonProductGrid from "@modules/skeletons/templates/skeleton-product-grid"
 import RefinementList from "@modules/store/components/refinement-list"
 import { SortOptions } from "@modules/store/components/refinement-list/sort-products"
 import PaginatedProducts from "@modules/store/templates/paginated-products"
-import LocalizedClientLink from "@modules/common/components/localized-client-link"
-import { HttpTypes } from "@medusajs/types"
-import { OptionValueIds } from "@lib/util/product-option-filters"
 
-export default function CategoryTemplate({
+type CategoryFilterOption = {
+  id: string
+  title: string
+  values: Array<{
+    id: string
+    value: string
+  }>
+}
+
+type CategoryFiltersResponse = {
+  category_id: string
+  options: CategoryFilterOption[]
+  availability: {
+    supported: boolean
+    in_stock_product_ids: string[]
+    in_stock_count: number
+    total_products: number
+  }
+}
+
+const getCategoryFilters = async (
+  categoryIds: string[]
+): Promise<CategoryFiltersResponse> => {
+  try {
+    const headers = {
+      ...(await getAuthHeaders()),
+    }
+
+    return await sdk.client.fetch<CategoryFiltersResponse>(
+      "/store/category-filters",
+      {
+        method: "GET",
+        query: {
+          category_id:
+            categoryIds[0],
+          category_ids:
+            categoryIds.join(","),
+        },
+        headers,
+        cache: "no-store",
+      }
+    )
+  } catch (error) {
+    console.error(
+      "Failed to prefetch category filters",
+      error
+    )
+
+    return {
+      category_id:
+        categoryIds[0] ?? "",
+      options: [],
+      availability: {
+        supported: false,
+        in_stock_product_ids: [],
+        in_stock_count: 0,
+        total_products: 0,
+      },
+    }
+  }
+}
+
+export default async function CategoryTemplate({
   category,
   sortBy,
   page,
   countryCode,
   optionValueIds,
+  availability,
+  isViewAll = false,
+  categoryBreadcrumb = [],
 }: {
   category: HttpTypes.StoreProductCategory
   sortBy?: SortOptions
   page?: string
   countryCode: string
   optionValueIds?: OptionValueIds
+  availability?: "in_stock"
+  isViewAll?: boolean
+  categoryBreadcrumb?: HttpTypes.StoreProductCategory[]
 }) {
-  const pageNumber = page ? parseInt(page) : 1
-  const sort = sortBy || "created_at"
+  const pageNumber = page
+    ? parseInt(page)
+    : 1
 
-  if (!category || !countryCode) notFound()
+  const sort =
+    sortBy || "created_at"
 
-  const parents = [] as HttpTypes.StoreProductCategory[]
-
-  const getParents = (category: HttpTypes.StoreProductCategory) => {
-    if (category.parent_category) {
-      parents.push(category.parent_category)
-      getParents(category.parent_category)
-    }
+  if (!category || !countryCode) {
+    notFound()
   }
 
-  getParents(category)
+  /*
+   * Parent category pages must include products and filters
+   * from every nested child category.
+   */
+  const categoryIds =
+    getCategoryIdsWithDescendants(
+      category
+    )
+
+  /*
+   * This exact canonical route is passed into every product card.
+   * It becomes the product-page breadcrumb context.
+   */
+  const categoryPath =
+    categoryBreadcrumb
+      .map(
+        (crumb) =>
+          crumb.handle
+      )
+      .filter(Boolean)
+      .join("/")
+
+  /*
+   * Prefetch filter facets for the whole selected subtree.
+   */
+  const filterData =
+    await getCategoryFilters(
+      categoryIds
+    )
 
   return (
     <div
-      className="flex flex-col small:flex-row small:items-start py-6 content-container"
+      className="relative z-0 w-full px-5 pb-5 pt-6"
       data-testid="category-container"
     >
-      <RefinementList
-        sortBy={sort}
-        data-testid="sort-by-container"
-        hideOptionsPicker
-      />
-      <div className="w-full">
-        <div className="flex flex-row mb-8 text-2xl-semi gap-4">
-          {parents &&
-            parents.map((parent) => (
-              <span key={parent.id} className="text-ui-fg-subtle">
-                <LocalizedClientLink
-                  className="mr-4 hover:text-black"
-                  href={`/categories/${parent.handle}`}
-                  data-testid="sort-by-link"
+      <div className="mb-5 flex items-start justify-between gap-6">
+        <div className="min-w-0">
+          <div
+            className="
+              flex
+              flex-wrap
+              items-center
+              gap-x-2
+              gap-y-1
+              text-[12px]
+              font-normal
+              leading-5
+              text-black
+            "
+          >
+            {categoryBreadcrumb.map(
+              (crumb, index) => {
+                const isLast =
+                  index ===
+                  categoryBreadcrumb.length -
+                    1
+
+                const href =
+                  `/categories/${categoryBreadcrumb
+                    .slice(0, index + 1)
+                    .map(
+                      (item) =>
+                        item.handle
+                    )
+                    .filter(Boolean)
+                    .join("/")}`
+
+                return (
+                  <Fragment
+                    key={crumb.id}
+                  >
+                    {index > 0 && (
+                      <span
+                        aria-hidden="true"
+                        className="text-black/45"
+                      >
+                        ·
+                      </span>
+                    )}
+
+                    {isLast &&
+                    !isViewAll ? (
+                      <h1
+                        className="text-[12px] font-normal leading-5 text-black"
+                        data-testid="category-page-title"
+                      >
+                        {crumb.name}
+                      </h1>
+                    ) : (
+                      <LocalizedClientLink
+                        href={href}
+                        className="transition-opacity hover:opacity-55"
+                      >
+                        {crumb.name}
+                      </LocalizedClientLink>
+                    )}
+                  </Fragment>
+                )
+              }
+            )}
+
+            {isViewAll && (
+              <>
+                {categoryBreadcrumb.length >
+                  0 && (
+                  <span
+                    aria-hidden="true"
+                    className="text-black/45"
+                  >
+                    ·
+                  </span>
+                )}
+
+                <h1
+                  className="text-[12px] font-normal leading-5 text-black"
+                  data-testid="category-page-title"
                 >
-                  {parent.name}
-                </LocalizedClientLink>
-                /
-              </span>
-            ))}
-          <h1 data-testid="category-page-title">{category.name}</h1>
+                  View All
+                </h1>
+              </>
+            )}
+          </div>
+
+          {category.description && (
+            <p className="mt-2 max-w-3xl text-[12px] font-normal leading-5 text-black/65">
+              {category.description}
+            </p>
+          )}
         </div>
-        {category.description && (
-          <div className="mb-8 text-base-regular">
-            <p>{category.description}</p>
-          </div>
-        )}
-        {category.category_children && (
-          <div className="mb-8 text-base-large">
-            <ul className="grid grid-cols-1 gap-2">
-              {category.category_children?.map((c) => (
-                <li key={c.id}>
-                  <InteractiveLink href={`/categories/${c.handle}`}>
-                    {c.name}
-                  </InteractiveLink>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <Suspense
-          fallback={
-            <SkeletonProductGrid
-              numberOfProducts={category.products?.length ?? 8}
-            />
+
+        <RefinementList
+          sortBy={sort}
+          categoryId={
+            category.id
           }
-        >
-          <PaginatedProducts
-            sortBy={sort}
-            page={pageNumber}
-            categoryId={category.id}
-            countryCode={countryCode}
-            optionValueIds={optionValueIds}
-          />
-        </Suspense>
+          availability={
+            availability
+          }
+          filterOptions={
+            filterData.options
+          }
+          availabilitySupported={
+            filterData
+              .availability
+              .supported
+          }
+          data-testid="sort-by-container"
+        />
       </div>
+
+      <Suspense
+        fallback={
+          <SkeletonProductGrid
+            numberOfProducts={
+              category.products
+                ?.length ?? 8
+            }
+          />
+        }
+      >
+        <PaginatedProducts
+          sortBy={sort}
+          page={pageNumber}
+          categoryId={
+            category.id
+          }
+          categoryIds={
+            categoryIds
+          }
+          countryCode={
+            countryCode
+          }
+          optionValueIds={
+            optionValueIds
+          }
+          inStockOnly={
+            availability ===
+            "in_stock"
+          }
+          categoryPath={
+            categoryPath
+          }
+        />
+      </Suspense>
     </div>
   )
 }

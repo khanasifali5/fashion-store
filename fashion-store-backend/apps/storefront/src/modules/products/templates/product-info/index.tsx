@@ -1,5 +1,4 @@
 import { HttpTypes } from "@medusajs/types"
-import { Heading, Text } from "@modules/common/components/ui"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
 
 type ProductInfoProps = {
@@ -9,29 +8,30 @@ type ProductInfoProps = {
 const ProductInfo = ({ product }: ProductInfoProps) => {
   return (
     <div id="product-info">
-      <div className="flex flex-col gap-y-4 lg:max-w-[500px] mx-auto">
-        {product.collection && (
-          <LocalizedClientLink
-            href={`/collections/${product.collection.handle}`}
-            className="text-medium text-ui-fg-muted hover:text-ui-fg-subtle"
-          >
-            {product.collection.title}
-          </LocalizedClientLink>
+      <div className="flex flex-col">
+        {(product.collection || product.type?.value) && (
+          <div className="mb-10 flex flex-wrap items-center gap-2 text-[11px] font-normal text-[#77716b]">
+            {product.collection && (
+              <LocalizedClientLink
+                href={`/collections/${product.collection.handle}`}
+                className="transition-colors hover:text-black"
+              >
+                {product.collection.title}
+              </LocalizedClientLink>
+            )}
+
+            {product.collection && product.type?.value && <span>·</span>}
+
+            {product.type?.value && <span>{product.type.value}</span>}
+          </div>
         )}
-        <Heading
-          level="h2"
-          className="text-3xl leading-10 text-ui-fg-base"
+
+        <h1
+          className="text-[15px] font-normal leading-[1.35] tracking-[-0.01em] text-[#171513]"
           data-testid="product-title"
         >
           {product.title}
-        </Heading>
-
-        <Text
-          className="text-medium text-ui-fg-subtle whitespace-pre-line"
-          data-testid="product-description"
-        >
-          {product.description}
-        </Text>
+        </h1>
       </div>
     </div>
   )

@@ -1,161 +1,211 @@
 "use client"
 
 import * as Accordion from "@radix-ui/react-accordion"
-import { useEffect, useState } from "react"
-
 import { ChevronDownMini } from "@medusajs/icons"
-import { sdk } from "@lib/config"
-import { HttpTypes } from "@medusajs/types"
 import clsx from "clsx"
+import { useState } from "react"
+
+type CategoryFilterOption = {
+  id: string
+  title: string
+  values: Array<{
+    id: string
+    value: string
+  }>
+}
 
 type OptionsPickerProps = {
+  options: CategoryFilterOption[]
   selectedValueIds: string[]
-  setOptionValueIds: (valueIds: string[]) => void
+  setOptionValueIds: (
+    valueIds: string[]
+  ) => void
 }
 
 const OptionsPicker = ({
+  options,
   selectedValueIds,
   setOptionValueIds,
 }: OptionsPickerProps) => {
-  const [options, setOptions] = useState<HttpTypes.StoreProductOption[]>([])
-  const [openItems, setOpenItems] = useState<string[]>([])
-
-  useEffect(() => {
-    const fetchOptions = async () => {
-      try {
-        const response = await sdk.client.fetch<{
-          product_options?: HttpTypes.StoreProductOption[]
-        }>("/store/product-options", {
-          method: "GET",
-          query: {
-            is_exclusive: false,
-            fields: "*values",
-          },
-        })
-
-        if (response?.product_options) {
-          setOptions(response.product_options)
-        }
-      } catch (error) {
-        console.error("Failed to fetch product options", error)
-      }
-    }
-
-    fetchOptions()
-  }, [])
-
-  useEffect(() => {
-    if (options.length) {
-      setOpenItems(options.map((option) => option.id))
-    }
-  }, [options])
+  const [openItem, setOpenItem] =
+    useState<string>("")
 
   if (!options.length) {
     return null
   }
 
   return (
-    <div className="flex flex-col gap-y-4">
-      <div className="flex items-center justify-between px-1">
-        <span className="txt-compact-small-plus text-ui-fg-subtle">
-          Options
-        </span>
-      </div>
-      <Accordion.Root
-        type="multiple"
-        value={openItems}
-        onValueChange={(values) => setOpenItems(values as string[])}
-        className="flex flex-col gap-y-3 pr-6"
-      >
-        {options.map((option) => {
-          const values =
-            option.values
-              ?.map((value) => ({
-                id: value.id,
-                label: value.value,
-              }))
-              .filter(
-                (value): value is { id: string; label: string } =>
-                  !!value.id && !!value.label
-              ) || []
+    <Accordion.Root
+      type="single"
+      collapsible
+      value={openItem}
+      onValueChange={
+        setOpenItem
+      }
+      className="w-full"
+    >
+      {options.map((option) => {
+        const values =
+          option.values ?? []
 
-          if (!values.length) {
-            return null
-          }
+        if (!values.length) {
+          return null
+        }
 
-          const toggleValue = (valueId: string) => {
-            const isSelected = selectedValueIds.includes(valueId)
-            const nextSelections = isSelected
-              ? selectedValueIds.filter((id) => id !== valueId)
-              : [...selectedValueIds, valueId]
+        const selectedValues =
+          values.filter((value) =>
+            selectedValueIds.includes(
+              value.id
+            )
+          )
 
-            setOptionValueIds(Array.from(new Set(nextSelections)))
-          }
+        const selectedLabels =
+          selectedValues.map(
+            (value) =>
+              value.value
+          )
 
-          const isOpen = openItems.includes(option.id)
-          const selectedCount = values.filter((value) =>
-            selectedValueIds.includes(value.id)
-          ).length
+        const toggleValue = (
+          valueId: string
+        ) => {
+          const isSelected =
+            selectedValueIds.includes(
+              valueId
+            )
 
-          return (
-            <Accordion.Item
-              key={option.id}
-              value={option.id}
-              className="overflow-hidden"
-            >
-              <Accordion.Header>
-                <Accordion.Trigger className="flex w-full items-center justify-between py-3 text-left">
-                  <div className="flex items-center gap-2">
-                    <span className="txt-compact-small-plus text-ui-fg-base">
-                      {option.title || "Option"}
-                    </span>
-                    <span className="txt-compact-small-plus text-ui-fg-muted">
-                      ({selectedCount})
-                    </span>
-                  </div>
-                  <span
-                    className={clsx(
-                      "flex h-7 w-7 items-center justify-center text-ui-fg-muted transition-transform duration-150",
-                      {
-                        "rotate-180": isOpen,
-                      }
-                    )}
-                  >
-                    <ChevronDownMini />
+          const nextSelections =
+            isSelected
+              ? selectedValueIds.filter(
+                  (id) =>
+                    id !== valueId
+                )
+              : [
+                  ...selectedValueIds,
+                  valueId,
+                ]
+
+          setOptionValueIds(
+            Array.from(
+              new Set(
+                nextSelections
+              )
+            )
+          )
+        }
+
+        const isOpen =
+          openItem === option.id
+
+        return (
+          <Accordion.Item
+            key={option.id}
+            value={option.id}
+            className="border-b border-black/10"
+          >
+            <Accordion.Header>
+              <Accordion.Trigger
+                className="
+                  flex
+                  w-full
+                  items-center
+                  justify-between
+                  py-5
+                  text-left
+                  text-[12px]
+                  font-normal
+                  leading-4
+                  text-black
+                  transition-opacity
+                  hover:opacity-60
+                "
+              >
+                <span className="min-w-0">
+                  <span className="block">
+                    {option.title ||
+                      "Option"}
                   </span>
-                </Accordion.Trigger>
-              </Accordion.Header>
-              <Accordion.Content className="pb-4 pt-1">
-                <div className="flex flex-wrap gap-2">
-                  {values.map((value) => {
-                    const isSelected = selectedValueIds.includes(value.id)
+
+                  {selectedLabels.length >
+                    0 && (
+                    <span className="mt-0.5 block truncate text-[11px] font-normal text-black/45">
+                      Selected:{" "}
+                      {selectedLabels.join(
+                        ", "
+                      )}
+                    </span>
+                  )}
+                </span>
+
+                <span
+                  className={clsx(
+                    "ml-4 flex h-5 w-5 shrink-0 items-center justify-center text-black transition-transform duration-150",
+                    {
+                      "-rotate-90":
+                        !isOpen,
+                      "rotate-0":
+                        isOpen,
+                    }
+                  )}
+                  aria-hidden="true"
+                >
+                  <ChevronDownMini />
+                </span>
+              </Accordion.Trigger>
+            </Accordion.Header>
+
+            <Accordion.Content
+              className="
+                overflow-hidden
+                pb-5
+                data-[state=closed]:animate-accordion-close
+                data-[state=open]:animate-accordion-open
+              "
+            >
+              <div className="flex flex-wrap gap-2">
+                {values.map(
+                  (value) => {
+                    const isSelected =
+                      selectedValueIds.includes(
+                        value.id
+                      )
 
                     return (
                       <button
-                        key={value.id}
-                        onClick={() => toggleValue(value.id)}
+                        key={
+                          value.id
+                        }
+                        type="button"
+                        onClick={() =>
+                          toggleValue(
+                            value.id
+                          )
+                        }
                         className={clsx(
-                          "border-ui-border-base border text-small-regular h-10 rounded-rounded px-3 flex items-center transition-colors duration-150",
+                          "flex min-h-[34px] min-w-[60px] items-center justify-center border bg-white px-4 py-2 text-[12px] font-normal leading-4 text-black transition-colors",
                           {
-                            "border-ui-border-interactive text-ui-fg-base":
+                            "border-black":
                               isSelected,
-                            "text-ui-fg-muted hover:text-ui-fg-base":
+                            "border-black/15 hover:border-black/50":
                               !isSelected,
                           }
                         )}
-                        aria-pressed={isSelected}
+                        aria-pressed={
+                          isSelected
+                        }
                       >
-                        {value.label}
+                        {
+                          value.value
+                        }
                       </button>
                     )
-                  })}
-                </div>
-              </Accordion.Content>
-            </Accordion.Item>
-          )
-        })}
-      </Accordion.Root>
-    </div>
+                  }
+                )}
+              </div>
+            </Accordion.Content>
+          </Accordion.Item>
+        )
+      })}
+    </Accordion.Root>
   )
 }
 

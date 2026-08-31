@@ -1,5 +1,7 @@
 "use client"
 
+import { useEffect, useState } from "react"
+
 import Back from "@modules/common/icons/back"
 import FastDelivery from "@modules/common/icons/fast-delivery"
 import Refresh from "@modules/common/icons/refresh"
@@ -12,6 +14,12 @@ type ProductTabsProps = {
 }
 
 const ProductTabs = ({ product }: ProductTabsProps) => {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const tabs = [
     {
       label: "Product Information",
@@ -22,6 +30,15 @@ const ProductTabs = ({ product }: ProductTabsProps) => {
       component: <ShippingInfoTab />,
     },
   ]
+
+  /*
+   * Radix Accordion generates internal IDs.
+   * Render it only after hydration so the server/client
+   * generated IDs cannot mismatch.
+   */
+  if (!mounted) {
+    return <div className="w-full" />
+  }
 
   return (
     <div className="w-full">
