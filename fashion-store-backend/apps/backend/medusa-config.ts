@@ -17,13 +17,13 @@ module.exports = defineConfig({
   },
 
   modules: [
-    {
+  {
   resolve: "@medusajs/medusa/file",
   options: {
     providers: [
       {
-        resolve: "@medusajs/medusa/file-s3",
-        id: "s3",
+        resolve: "./src/modules/optimized-r2",
+        id: "optimized-r2",
         options: {
           file_url: process.env.S3_FILE_URL,
           access_key_id: process.env.S3_ACCESS_KEY_ID,
