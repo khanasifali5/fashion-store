@@ -20,7 +20,12 @@ import {
 
 const processingProducts = new Set<string>()
 
-function slugify(value: string) {
+const ORGANIZE_EVENT =
+  "safafi.product-media.organize"
+
+function slugify(
+  value: string
+): string {
   return value
     .toLowerCase()
     .trim()
@@ -31,28 +36,49 @@ function slugify(value: string) {
 function getKeyFromUrl(
   url: string,
   publicBase: string
-) {
-  const base = publicBase.replace(/\/+$/, "")
+): string | null {
+  const base =
+    publicBase.replace(/\/+$/, "")
 
-  if (!url.startsWith(base + "/")) {
+  if (
+    !url.startsWith(
+      base + "/"
+    )
+  ) {
     return null
   }
 
-  const rawKey = url.slice(base.length + 1)
+  const rawKey =
+    url.slice(
+      base.length + 1
+    )
 
   try {
-    return decodeURIComponent(rawKey)
+    return decodeURIComponent(
+      rawKey
+    )
   } catch {
     return rawKey
   }
 }
 
-function getExtension(url: string) {
+function getExtension(
+  url: string
+): string {
   try {
-    const pathname = new URL(url).pathname
-    const match = pathname.match(/\.[a-zA-Z0-9]+$/)
+    const pathname =
+      new URL(url).pathname
 
-    return match?.[0]?.toLowerCase() || ".webp"
+    const match =
+      pathname.match(
+        /\.[a-zA-Z0-9]+$/
+      )
+
+    return (
+      match?.[0]
+        ?.toLowerCase() ||
+      ".webp"
+    )
   } catch {
     return ".webp"
   }
@@ -62,20 +88,28 @@ function findExistingProductFolder(
   productId: string,
   urls: string[],
   publicBase: string
-) {
+): string | null {
   for (const url of urls) {
-    const key = getKeyFromUrl(url, publicBase)
+    const key =
+      getKeyFromUrl(
+        url,
+        publicBase
+      )
 
     if (!key) {
       continue
     }
 
-    const parts = key.split("/")
+    const parts =
+      key.split("/")
 
     if (
       parts.length >= 3 &&
-      parts[0] === "products" &&
-      parts[1].endsWith(`-${productId}`)
+      parts[0] ===
+        "products" &&
+      parts[1].endsWith(
+        `-${productId}`
+      )
     ) {
       return `products/${parts[1]}`
     }
@@ -84,32 +118,200 @@ function findExistingProductFolder(
   return null
 }
 
+function isNotFoundError(
+  error: any
+): boolean {
+  const status =
+    error?.$metadata
+      ?.httpStatusCode
+
+  return (
+    status === 404 ||
+    error?.name ===
+      "NotFound" ||
+    error?.name ===
+      "NoSuchKey" ||
+    error?.Code ===
+      "NoSuchKey" ||
+    error?.code ===
+      "NoSuchKey"
+  )
+}
+
+function asRecord(
+  value: unknown
+): Record<
+  string,
+  unknown
+> {
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    !Array.isArray(value)
+  ) {
+    return value as Record<
+      string,
+      unknown
+    >
+  }
+
+  return {}
+}
+
+
+const wait = (
+  ms: number
+): Promise<void> =>
+  new Promise(
+    (resolve) =>
+      setTimeout(
+        resolve,
+        ms
+      )
+  )
+
+async function objectExists(
+  s3: S3Client,
+  bucket: string,
+  key: string
+): Promise<boolean> {
+  try {
+    await s3.send(
+      new HeadObjectCommand({
+        Bucket: bucket,
+        Key: key,
+      })
+    )
+
+    return true
+  } catch (
+    error: any
+  ) {
+    if (
+      isNotFoundError(
+        error
+      )
+    ) {
+      return false
+    }
+
+    throw error
+  }
+}
+
+async function deleteObjectVerified(
+  s3: S3Client,
+  bucket: string,
+  key: string
+): Promise<void> {
+  const delays = [
+    0,
+    250,
+    750,
+    1500,
+  ]
+
+  let lastError:
+    unknown = null
+
+  for (
+    const delay of delays
+  ) {
+    if (delay) {
+      await wait(delay)
+    }
+
+    try {
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: bucket,
+          Key: key,
+        })
+      )
+
+      const stillExists =
+        await objectExists(
+          s3,
+          bucket,
+          key
+        )
+
+      if (!stillExists) {
+        return
+      }
+
+      lastError =
+        new Error(
+          `R2 still reports object after delete: ${key}`
+        )
+    } catch (
+      error
+    ) {
+      lastError =
+        error
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error(
+      `Unable to verify deletion of ${key}`
+    )
+  )
+}
+
 export default async function productMediaOrganizer({
   event: { data },
   container,
-}: SubscriberArgs<{ id: string }>) {
-  const logger = container.resolve(
-    ContainerRegistrationKeys.LOGGER
-  )
+}: SubscriberArgs<{
+  id: string
+}>) {
+  const logger =
+    container.resolve(
+      ContainerRegistrationKeys.LOGGER
+    )
 
-  const query = container.resolve(
-    ContainerRegistrationKeys.QUERY
-  )
+  const query =
+    container.resolve(
+      ContainerRegistrationKeys.QUERY
+    )
 
-  const productId = data.id
+  const productId =
+    data.id
 
-  if (processingProducts.has(productId)) {
+  if (!productId) {
+    logger.warn(
+      "[Product Media Organizer] Missing product ID"
+    )
+    return
+  }
+
+  if (
+    processingProducts.has(
+      productId
+    )
+  ) {
     logger.info(
       `[Product Media Organizer] Already processing ${productId} - skip`
     )
     return
   }
 
-  processingProducts.add(productId)
+  processingProducts.add(
+    productId
+  )
+
+  const copiedDestinationKeys:
+    string[] = []
 
   try {
     const publicBase =
-      process.env.S3_FILE_URL?.replace(/\/+$/, "")
+      process.env.S3_FILE_URL
+        ?.replace(
+          /\/+$/,
+          ""
+        )
 
     const bucket =
       process.env.S3_BUCKET
@@ -118,10 +320,12 @@ export default async function productMediaOrganizer({
       process.env.S3_ENDPOINT
 
     const accessKeyId =
-      process.env.S3_ACCESS_KEY_ID
+      process.env
+        .S3_ACCESS_KEY_ID
 
     const secretAccessKey =
-      process.env.S3_SECRET_ACCESS_KEY
+      process.env
+        .S3_SECRET_ACCESS_KEY
 
     if (
       !publicBase ||
@@ -135,12 +339,15 @@ export default async function productMediaOrganizer({
       )
     }
 
-    const { data: products } = await query.graph({
+    const {
+      data: products,
+    } = await query.graph({
       entity: "product",
       fields: [
         "id",
         "title",
         "thumbnail",
+        "metadata",
         "images.id",
         "images.url",
       ],
@@ -149,7 +356,8 @@ export default async function productMediaOrganizer({
       },
     })
 
-    const product = products[0]
+    const product =
+      products[0]
 
     if (!product) {
       logger.warn(
@@ -158,7 +366,8 @@ export default async function productMediaOrganizer({
       return
     }
 
-    const images = product.images || []
+    const images =
+      product.images || []
 
     if (!images.length) {
       logger.info(
@@ -167,18 +376,28 @@ export default async function productMediaOrganizer({
       return
     }
 
-    const allUrls = images
-      .map((image) => image.url)
-      .filter(Boolean)
+    const allUrls =
+      images
+        .map(
+          (image: any) =>
+            image.url
+        )
+        .filter(
+          Boolean
+        ) as string[]
 
-    if (product.thumbnail) {
-      allUrls.push(product.thumbnail)
+    if (
+      product.thumbnail
+    ) {
+      allUrls.push(
+        product.thumbnail
+      )
     }
 
     /*
-     * Important:
-     * If product was already organized once, keep the
-     * existing folder even if its title is renamed later.
+     * If this product has already been organized once,
+     * keep that original folder forever, even if the
+     * product title changes later.
      */
     const existingFolder =
       findExistingProductFolder(
@@ -189,16 +408,25 @@ export default async function productMediaOrganizer({
 
     const folder =
       existingFolder ||
-      `products/${slugify(product.title || "product")}-${product.id}`
+      `products/${
+        slugify(
+          product.title ||
+            "product"
+        ) || "product"
+      }-${product.id}`
 
-    const s3 = new S3Client({
-      region: process.env.S3_REGION || "auto",
-      endpoint,
-      credentials: {
-        accessKeyId,
-        secretAccessKey,
-      },
-    })
+    const s3 =
+      new S3Client({
+        region:
+          process.env
+            .S3_REGION ||
+          "auto",
+        endpoint,
+        credentials: {
+          accessKeyId,
+          secretAccessKey,
+        },
+      })
 
     logger.info(
       `[Product Media Organizer] Product: ${product.title}`
@@ -216,8 +444,13 @@ export default async function productMediaOrganizer({
       newKey: string
     }> = []
 
-    for (const image of images) {
-      if (!image.id || !image.url) {
+    for (
+      const image of images
+    ) {
+      if (
+        !image.id ||
+        !image.url
+      ) {
         continue
       }
 
@@ -235,10 +468,14 @@ export default async function productMediaOrganizer({
       }
 
       /*
-       * Already correctly organized.
+       * Already inside this product's stable folder.
        * Reorder/edit => zero R2 operations.
        */
-      if (oldKey.startsWith(`${folder}/`)) {
+      if (
+        oldKey.startsWith(
+          `${folder}/`
+        )
+      ) {
         logger.info(
           `[Product Media Organizer] Already organized: ${image.id}`
         )
@@ -246,7 +483,9 @@ export default async function productMediaOrganizer({
       }
 
       const extension =
-        getExtension(image.url)
+        getExtension(
+          image.url
+        )
 
       const newKey =
         `${folder}/${image.id}${extension}`
@@ -254,48 +493,73 @@ export default async function productMediaOrganizer({
       const newUrl =
         `${publicBase}/${newKey}`
 
-      let destinationExists = false
+      let destinationExists =
+        false
 
       try {
         await s3.send(
           new HeadObjectCommand({
-            Bucket: bucket,
-            Key: newKey,
+            Bucket:
+              bucket,
+            Key:
+              newKey,
           })
         )
 
-        destinationExists = true
-      } catch {
-        destinationExists = false
+        destinationExists =
+          true
+      } catch (
+        error: any
+      ) {
+        if (
+          isNotFoundError(
+            error
+          )
+        ) {
+          destinationExists =
+            false
+        } else {
+          throw error
+        }
       }
 
-      if (!destinationExists) {
+      if (
+        !destinationExists
+      ) {
         logger.info(
           `[Product Media Organizer] Copying ${oldKey} -> ${newKey}`
         )
 
         await s3.send(
           new CopyObjectCommand({
-            Bucket: bucket,
-            Key: newKey,
-
-            /*
-             * R2 supports S3 CopyObject.
-             * encodeURI preserves path slashes.
-             */
-            CopySource: encodeURI(
-              `/${bucket}/${oldKey}`
-            ),
-
-            MetadataDirective: "COPY",
+            Bucket:
+              bucket,
+            Key:
+              newKey,
+            CopySource:
+              encodeURI(
+                `/${bucket}/${oldKey}`
+              ),
+            MetadataDirective:
+              "COPY",
           })
         )
 
+        /*
+         * Verify the new object before touching the DB
+         * or deleting the source.
+         */
         await s3.send(
           new HeadObjectCommand({
-            Bucket: bucket,
-            Key: newKey,
+            Bucket:
+              bucket,
+            Key:
+              newKey,
           })
+        )
+
+        copiedDestinationKeys.push(
+          newKey
         )
       } else {
         logger.info(
@@ -304,8 +568,10 @@ export default async function productMediaOrganizer({
       }
 
       changes.push({
-        id: image.id,
-        oldUrl: image.url,
+        id:
+          image.id,
+        oldUrl:
+          image.url,
         oldKey,
         newUrl,
         newKey,
@@ -314,121 +580,430 @@ export default async function productMediaOrganizer({
 
     if (!changes.length) {
       logger.info(
-        `[Product Media Organizer] Nothing to move`
+        "[Product Media Organizer] Nothing to move"
       )
       return
     }
 
-    /*
-     * Preserve current gallery ordering:
-     * update every existing image by ID,
-     * replacing only URLs that moved.
-     */
-    const movedById = new Map(
-      changes.map((change) => [
-        change.id,
-        change.newUrl,
-      ])
-    )
+    const movedById =
+      new Map(
+        changes.map(
+          (change) => [
+            change.id,
+            change.newUrl,
+          ]
+        )
+      )
 
-    const updatedImages = images.map(
-      (image) => ({
-        id: image.id,
-        url:
-          movedById.get(image.id) ||
-          image.url,
-      })
-    )
+    const movedByOldUrl =
+      new Map(
+        changes.map(
+          (change) => [
+            change.oldUrl,
+            change.newUrl,
+          ]
+        )
+      )
 
     /*
-     * If current thumbnail points to one of the
-     * moved images, update thumbnail too.
+     * Preserve current gallery order.
+     * Only the URLs change.
      */
+    const updatedImages =
+      images.map(
+        (image: any) => ({
+          id:
+            image.id,
+          url:
+            movedById.get(
+              image.id
+            ) ||
+            image.url,
+        })
+      )
+
     let updatedThumbnail =
       product.thumbnail
 
-    const thumbnailMove =
-      changes.find(
-        (change) =>
-          change.oldUrl === product.thumbnail
+    if (
+      typeof product.thumbnail ===
+        "string"
+    ) {
+      updatedThumbnail =
+        movedByOldUrl.get(
+          product.thumbnail
+        ) ||
+        product.thumbnail
+    }
+
+    /*
+     * Product Builder stores both stable ProductImage IDs
+     * and URL fallbacks for Main / Flip / Swatch roles.
+     * Keep the IDs unchanged and refresh URL fallbacks
+     * whenever the R2 object moves.
+     */
+    const currentMetadata =
+      asRecord(
+        product.metadata
       )
 
-    if (thumbnailMove) {
-      updatedThumbnail =
-        thumbnailMove.newUrl
+    const updatedMetadata: Record<
+      string,
+      unknown
+    > = {
+      ...currentMetadata,
+    }
+
+    const primaryId =
+      typeof currentMetadata
+        .showcase_primary_image_id ===
+        "string"
+        ? currentMetadata
+            .showcase_primary_image_id
+        : ""
+
+    const primaryUrl =
+      typeof currentMetadata
+        .showcase_primary_image_url ===
+        "string"
+        ? currentMetadata
+            .showcase_primary_image_url
+        : ""
+
+    if (
+      primaryId ||
+      primaryUrl
+    ) {
+      updatedMetadata.showcase_primary_image_url =
+        (
+          primaryId &&
+          movedById.get(
+            primaryId
+          )
+        ) ||
+        movedByOldUrl.get(
+          primaryUrl
+        ) ||
+        primaryUrl
+    }
+
+    const flipId =
+      typeof currentMetadata
+        .showcase_flip_image_id ===
+        "string"
+        ? currentMetadata
+            .showcase_flip_image_id
+        : ""
+
+    const flipUrl =
+      typeof currentMetadata
+        .showcase_flip_image_url ===
+        "string"
+        ? currentMetadata
+            .showcase_flip_image_url
+        : ""
+
+    if (
+      flipId ||
+      flipUrl
+    ) {
+      updatedMetadata.showcase_flip_image_url =
+        (
+          flipId &&
+          movedById.get(
+            flipId
+          )
+        ) ||
+        movedByOldUrl.get(
+          flipUrl
+        ) ||
+        flipUrl
+    }
+
+    const rawSwatches =
+      currentMetadata
+        .showcase_color_swatches
+
+    if (
+      rawSwatches &&
+      typeof rawSwatches ===
+        "object" &&
+      !Array.isArray(
+        rawSwatches
+      )
+    ) {
+      const nextSwatches:
+        Record<
+          string,
+          unknown
+        > = {}
+
+      for (
+        const [
+          color,
+          rawValue,
+        ] of Object.entries(
+          rawSwatches as Record<
+            string,
+            unknown
+          >
+        )
+      ) {
+        if (
+          !rawValue ||
+          typeof rawValue !==
+            "object" ||
+          Array.isArray(
+            rawValue
+          )
+        ) {
+          nextSwatches[
+            color
+          ] =
+            rawValue
+          continue
+        }
+
+        const swatch =
+          rawValue as Record<
+            string,
+            unknown
+          >
+
+        const imageId =
+          typeof swatch
+            .image_id ===
+            "string"
+            ? swatch
+                .image_id
+            : ""
+
+        const imageUrl =
+          typeof swatch
+            .image_url ===
+            "string"
+            ? swatch
+                .image_url
+            : ""
+
+        nextSwatches[
+          color
+        ] = {
+          ...swatch,
+          image_url:
+            (
+              imageId &&
+              movedById.get(
+                imageId
+              )
+            ) ||
+            movedByOldUrl.get(
+              imageUrl
+            ) ||
+            imageUrl,
+        }
+      }
+
+      updatedMetadata.showcase_color_swatches =
+        nextSwatches
     }
 
     logger.info(
-      `[Product Media Organizer] Updating Medusa URLs`
+      "[Product Media Organizer] Updating Medusa URLs + storefront metadata"
     )
 
-    await updateProductsWorkflow(container).run({
+    /*
+     * This workflow will emit product.updated, but this
+     * organizer does NOT subscribe to product.updated
+     * anymore, so there is no recursive organizer loop.
+     */
+    await updateProductsWorkflow(
+      container
+    ).run({
       input: {
         products: [
           {
-            id: product.id,
-            images: updatedImages,
+            id:
+              product.id,
+            images:
+              updatedImages,
             thumbnail:
-              updatedThumbnail || undefined,
+              updatedThumbnail ||
+              undefined,
+            metadata:
+              updatedMetadata,
           },
         ],
       },
     })
 
     /*
-     * Only after Medusa DB update succeeds,
-     * delete old objects.
+     * DB update succeeded and now points at verified
+     * destination objects. Only now remove old objects.
+     *
+     * IMPORTANT:
+     * DeleteObject alone is not treated as success.
+     * We verify with HeadObject and retry. The previous
+     * implementation swallowed delete failures and could
+     * print DONE while duplicate source objects remained.
      */
-    for (const change of changes) {
-      /*
-       * Safety: don't delete if source and destination
-       * somehow became identical.
-       */
-      if (change.oldKey === change.newKey) {
+    const cleanupFailures:
+      string[] = []
+
+    for (
+      const change of changes
+    ) {
+      if (
+        change.oldKey ===
+        change.newKey
+      ) {
         continue
       }
 
       try {
-        await s3.send(
-          new DeleteObjectCommand({
-            Bucket: bucket,
-            Key: change.oldKey,
-          })
+        await deleteObjectVerified(
+          s3,
+          bucket,
+          change.oldKey
         )
 
         logger.info(
-          `[Product Media Organizer] Old object deleted: ${change.oldKey}`
+          `[Product Media Organizer] Old object deleted + verified: ${change.oldKey}`
         )
-      } catch (error: any) {
-        /*
-         * DB already points to the verified new object,
-         * so failed cleanup isn't fatal.
-         */
-        logger.warn(
-          `[Product Media Organizer] Could not delete old object ${change.oldKey}: ${
-            error?.message || error
+      } catch (
+        error: any
+      ) {
+        cleanupFailures.push(
+          change.oldKey
+        )
+
+        logger.error(
+          `[Product Media Organizer] SOURCE CLEANUP FAILED ${change.oldKey}: ${
+            error?.message ||
+            error
           }`
         )
       }
     }
 
-    logger.info(
-      `[Product Media Organizer] DONE - ${changes.length} image(s) organized`
-    )
-  } catch (error: any) {
+    if (
+      cleanupFailures.length
+    ) {
+      logger.error(
+        `[Product Media Organizer] ORGANIZED, BUT ${cleanupFailures.length} old source object(s) still need cleanup.`
+      )
+    } else {
+      logger.info(
+        `[Product Media Organizer] DONE - ${changes.length} image(s) organized; old source objects removed`
+      )
+    }
+  } catch (
+    error: any
+  ) {
+    /*
+     * If we copied new destination objects but the Medusa
+     * DB update failed, remove only the destinations that
+     * THIS run created. The original source objects are
+     * still intact, so the product remains usable.
+     */
+    if (
+      copiedDestinationKeys.length
+    ) {
+      try {
+        const bucket =
+          process.env.S3_BUCKET
+
+        const endpoint =
+          process.env.S3_ENDPOINT
+
+        const accessKeyId =
+          process.env
+            .S3_ACCESS_KEY_ID
+
+        const secretAccessKey =
+          process.env
+            .S3_SECRET_ACCESS_KEY
+
+        if (
+          bucket &&
+          endpoint &&
+          accessKeyId &&
+          secretAccessKey
+        ) {
+          const cleanupS3 =
+            new S3Client({
+              region:
+                process.env
+                  .S3_REGION ||
+                "auto",
+              endpoint,
+              credentials: {
+                accessKeyId,
+                secretAccessKey,
+              },
+            })
+
+          for (
+            const key of
+            copiedDestinationKeys
+          ) {
+            try {
+              await cleanupS3.send(
+                new DeleteObjectCommand({
+                  Bucket:
+                    bucket,
+                  Key:
+                    key,
+                })
+              )
+            } catch (
+              cleanupError: any
+            ) {
+              logger.warn(
+                `[Product Media Organizer] Could not roll back copied destination ${key}: ${
+                  cleanupError?.message ||
+                  cleanupError
+                }`
+              )
+            }
+          }
+        }
+      } catch (
+        cleanupError: any
+      ) {
+        logger.warn(
+          `[Product Media Organizer] Destination rollback failed: ${
+            cleanupError?.message ||
+            cleanupError
+          }`
+        )
+      }
+    }
+
     logger.error(
       `[Product Media Organizer] Error: ${
-        error?.message || error
+        error?.message ||
+        error
       }`
     )
   } finally {
-    processingProducts.delete(productId)
+    processingProducts.delete(
+      productId
+    )
   }
 }
 
-export const config: SubscriberConfig = {
-  event: [
-    "product.created",
-    "product.updated",
-  ],
-}
+export const config:
+  SubscriberConfig = {
+    /*
+     * IMPORTANT:
+     * Do NOT listen to product.created / product.updated.
+     *
+     * Product Builder emits this custom event only after
+     * product creation, metadata normalization, and
+     * variant-image association have all completed.
+     * That removes the previous race condition.
+     */
+    event:
+      ORGANIZE_EVENT,
+  }

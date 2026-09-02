@@ -168,6 +168,49 @@ const createHandle = (
     .replace(/^-+|-+$/g, "")
 }
 
+const NATIVE_SELECT_CLASS =
+  "mt-2 h-9 w-full rounded-md border border-ui-border-base bg-white px-3 text-sm text-black outline-none transition focus:border-ui-border-interactive disabled:opacity-60"
+
+const createSkuProductCode = () => {
+  const alphabet =
+    "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+  try {
+    const bytes =
+      new Uint8Array(8)
+
+    crypto.getRandomValues(
+      bytes
+    )
+
+    return Array.from(
+      bytes,
+      (byte) =>
+        alphabet[
+          byte %
+            alphabet.length
+        ]
+    ).join("")
+  } catch {
+    return Math.random()
+      .toString(36)
+      .slice(2, 10)
+      .toUpperCase()
+      .padEnd(8, "X")
+  }
+}
+
+const getVariantKey = (
+  color: string,
+  size: string
+) => {
+  return `${color
+    .trim()
+    .toLowerCase()}::${size
+    .trim()
+    .toLowerCase()}`
+}
+
 const ProductBuilderPage = () => {
   /*
    * Basic product information
@@ -199,6 +242,16 @@ const ProductBuilderPage = () => {
     uploadedImages,
     setUploadedImages,
   ] = useState<UploadedImage[]>([])
+
+  /*
+   * Files uploaded during the current builder session.
+   * These IDs let us clean R2/File Module uploads if
+   * product creation fails or the user removes a new image.
+   */
+  const [
+    sessionUploadedFileIds,
+    setSessionUploadedFileIds,
+  ] = useState<string[]>([])
 
   /*
    * Storefront card media controls.
@@ -359,6 +412,16 @@ const ProductBuilderPage = () => {
   ] = useState("")
 
   const [
+    expandedCategoryIds,
+    setExpandedCategoryIds,
+  ] = useState<string[]>([])
+
+  const [
+    showAdvancedOrganize,
+    setShowAdvancedOrganize,
+  ] = useState(false)
+
+  const [
     tagSearch,
     setTagSearch,
   ] = useState("")
@@ -489,6 +552,25 @@ const ProductBuilderPage = () => {
   ] = useState("0")
 
 
+
+  /*
+   * Stable SKU identity.
+   * New products get one random Safafi product code.
+   * Existing products keep their existing variant SKUs.
+   */
+  const [
+    skuProductCode,
+    setSkuProductCode,
+  ] = useState(
+    () => createSkuProductCode()
+  )
+
+  const [
+    existingVariantSkuMap,
+    setExistingVariantSkuMap,
+  ] = useState<
+    Record<string, string>
+  >({})
 
   /*
    * Global Medusa options
@@ -886,15 +968,23 @@ const ProductBuilderPage = () => {
     setHandleEdited(false)
 
     setUploadedImages([])
+    setSessionUploadedFileIds([])
     setMainCardImage(null)
     setHoverCardImage(null)
     setColorImageMap({})
     setColorSwatchMap({})
 
+    setSkuProductCode(
+      createSkuProductCode()
+    )
+    setExistingVariantSkuMap({})
+
     setSelectedTypeId("")
     setSelectedCollectionId("")
     setSelectedCategoryIds([])
+    setExpandedCategoryIds([])
     setSelectedTagIds([])
+    setShowAdvancedOrganize(false)
     setDiscountable(true)
 
     setPriceInr("")
@@ -1352,11 +1442,23 @@ const ProductBuilderPage = () => {
             ? product.metadata
             : {}
 
+        const primaryImageId =
+          typeof metadata.showcase_primary_image_id ===
+          "string"
+            ? metadata.showcase_primary_image_id
+            : ""
+
         const primaryUrl =
           typeof metadata.showcase_primary_image_url ===
           "string"
             ? metadata.showcase_primary_image_url
             : product.thumbnail
+
+        const flipImageId =
+          typeof metadata.showcase_flip_image_id ===
+          "string"
+            ? metadata.showcase_flip_image_id
+            : ""
 
         const flipUrl =
           typeof metadata.showcase_flip_image_url ===
@@ -1367,9 +1469,14 @@ const ProductBuilderPage = () => {
         setMainCardImage(
           productImages.find(
             (image) =>
-              image.url ===
-              primaryUrl
+              image.id ===
+              primaryImageId
           ) ??
+            productImages.find(
+              (image) =>
+                image.url ===
+                primaryUrl
+            ) ??
             productImages[0] ??
             null
         )
@@ -1377,9 +1484,14 @@ const ProductBuilderPage = () => {
         setHoverCardImage(
           productImages.find(
             (image) =>
-              image.url ===
-              flipUrl
+              image.id ===
+              flipImageId
           ) ??
+            productImages.find(
+              (image) =>
+                image.url ===
+                flipUrl
+            ) ??
             productImages[1] ??
             productImages[0] ??
             null
@@ -1427,7 +1539,13 @@ const ProductBuilderPage = () => {
                 unknown
               >
 
-            const imageUrl =
+            const storedImageId =
+              typeof value.image_id ===
+              "string"
+                ? value.image_id
+                : ""
+
+            const storedImageUrl =
               typeof value.image_url ===
               "string"
                 ? value.image_url
@@ -1436,14 +1554,16 @@ const ProductBuilderPage = () => {
             const image =
               productImages.find(
                 (item) =>
+                  item.id ===
+                  storedImageId
+              ) ??
+              productImages.find(
+                (item) =>
                   item.url ===
-                  imageUrl
+                  storedImageUrl
               )
 
-            if (
-              !image ||
-              !imageUrl
-            ) {
+            if (!image) {
               continue
             }
 
@@ -1451,7 +1571,7 @@ const ProductBuilderPage = () => {
               image_id:
                 image.id,
               image_url:
-                imageUrl,
+                image.url,
               x:
                 typeof value.x ===
                 "number"
@@ -1545,6 +1665,9 @@ const ProductBuilderPage = () => {
             string[]
           > = {}
 
+        const nextVariantSkuMap:
+          Record<string, string> = {}
+
         for (
           const variant of
           variants
@@ -1592,6 +1715,21 @@ const ProductBuilderPage = () => {
             }
           }
 
+          if (
+            colorValue &&
+            sizeValue &&
+            typeof variant.sku ===
+              "string" &&
+            variant.sku.trim()
+          ) {
+            nextVariantSkuMap[
+              getVariantKey(
+                colorValue,
+                sizeValue
+              )
+            ] = variant.sku
+          }
+
           if (colorValue) {
             const existing =
               nextColorImageMap[
@@ -1630,6 +1768,10 @@ const ProductBuilderPage = () => {
 
         setColorImageMap(
           nextColorImageMap
+        )
+
+        setExistingVariantSkuMap(
+          nextVariantSkuMap
         )
 
         const firstVariant =
@@ -2178,7 +2320,131 @@ const ProductBuilderPage = () => {
       }
     }
 
-  const filteredCategories =
+  const categoryById =
+    useMemo(() => {
+      return new Map(
+        categories.map(
+          (category) => [
+            category.id,
+            category,
+          ]
+        )
+      )
+    }, [categories])
+
+  const categoryChildrenMap =
+    useMemo(() => {
+      const next =
+        new Map<
+          string,
+          CategoryRecord[]
+        >()
+
+      for (const category of categories) {
+        const parentId =
+          category.parent_category_id ||
+          "__root__"
+
+        const children =
+          next.get(parentId) ?? []
+
+        children.push(category)
+        next.set(parentId, children)
+      }
+
+      for (const children of next.values()) {
+        children.sort(
+          (a, b) =>
+            a.name.localeCompare(
+              b.name,
+              undefined,
+              {
+                sensitivity:
+                  "base",
+              }
+            )
+        )
+      }
+
+      return next
+    }, [categories])
+
+  const rootCategories =
+    useMemo(() => {
+      return categories
+        .filter(
+          (category) =>
+            !category.parent_category_id ||
+            !categoryById.has(
+              category.parent_category_id
+            )
+        )
+        .sort(
+          (a, b) =>
+            a.name.localeCompare(
+              b.name,
+              undefined,
+              {
+                sensitivity:
+                  "base",
+              }
+            )
+        )
+    }, [
+      categories,
+      categoryById,
+    ])
+
+  const categoryPathById =
+    useMemo(() => {
+      const paths =
+        new Map<
+          string,
+          string
+        >()
+
+      const buildPath = (
+        category: CategoryRecord
+     ): string => {
+        if (paths.has(category.id)) {
+          return paths.get(
+            category.id
+          )!
+        }
+
+        const parent =
+          category.parent_category_id
+            ? categoryById.get(
+                category.parent_category_id
+              )
+            : undefined
+
+        const path: string = parent
+          ? `${buildPath(
+              parent
+            )} > ${category.name}`
+          : category.name
+
+        paths.set(
+          category.id,
+          path
+        )
+
+        return path
+      }
+
+      categories.forEach(
+        (category) =>
+          buildPath(category)
+      )
+
+      return paths
+    }, [
+      categories,
+      categoryById,
+    ])
+
+  const categorySearchResults =
     useMemo(() => {
       const query =
         categorySearch
@@ -2186,25 +2452,144 @@ const ProductBuilderPage = () => {
           .toLowerCase()
 
       if (!query) {
-        return categories
-          .slice(0, 20)
+        return []
       }
 
       return categories
-        .filter(
-          (category) =>
+        .filter((category) => {
+          const path =
+            categoryPathById
+              .get(category.id)
+              ?.toLowerCase() ??
+            ""
+
+          return (
             category.name
               .toLowerCase()
               .includes(query) ||
             category.handle
               ?.toLowerCase()
-              .includes(query)
-        )
-        .slice(0, 20)
+              .includes(query) ||
+            path.includes(query)
+          )
+        })
+        .slice(0, 30)
     }, [
       categories,
       categorySearch,
+      categoryPathById,
     ])
+
+  const toggleCategoryExpanded = (
+    id: string
+  ) => {
+    setExpandedCategoryIds(
+      (previous) =>
+        previous.includes(id)
+          ? previous.filter(
+              (item) =>
+                item !== id
+            )
+          : [
+              ...previous,
+              id,
+            ]
+    )
+  }
+
+  const renderCategoryTreeNode = (
+    category: CategoryRecord,
+    depth = 0
+  ) => {
+    const children =
+      categoryChildrenMap.get(
+        category.id
+      ) ?? []
+
+    const hasChildren =
+      children.length > 0
+
+    const expanded =
+      expandedCategoryIds.includes(
+        category.id
+      )
+
+    const selected =
+      selectedCategoryIds.includes(
+        category.id
+      )
+
+    return (
+      <div key={category.id}>
+        <div
+          className="flex min-h-10 items-center border-b border-ui-border-base last:border-b-0 hover:bg-ui-bg-subtle"
+          style={{
+            paddingLeft:
+              `${12 + depth * 20}px`,
+          }}
+        >
+          <button
+            type="button"
+            aria-label={
+              hasChildren
+                ? expanded
+                  ? "Collapse category"
+                  : "Expand category"
+                : "No child categories"
+            }
+            disabled={!hasChildren}
+            onClick={() =>
+              hasChildren &&
+              toggleCategoryExpanded(
+                category.id
+              )
+            }
+            className="mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded text-ui-fg-muted hover:bg-ui-bg-base disabled:cursor-default disabled:opacity-30"
+          >
+            {hasChildren
+              ? expanded
+                ? "▾"
+                : "▸"
+              : "·"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              toggleCategory(
+                category.id
+              )
+            }
+            className="flex min-w-0 flex-1 items-center justify-between gap-3 py-2 pr-4 text-left"
+          >
+            <span className="truncate">
+              {category.name}
+            </span>
+
+            <span
+              className={
+                selected
+                  ? "font-semibold text-ui-fg-interactive"
+                  : "text-ui-fg-muted"
+              }
+            >
+              {selected ? "✓" : ""}
+            </span>
+          </button>
+        </div>
+
+        {hasChildren &&
+          expanded &&
+          children.map(
+            (child) =>
+              renderCategoryTreeNode(
+                child,
+                depth + 1
+              )
+          )}
+      </div>
+    )
+  }
 
   const filteredTags =
     useMemo(() => {
@@ -2514,6 +2899,123 @@ const ProductBuilderPage = () => {
     )
   }
 
+  const registerSessionUploads = (
+    images: UploadedImage[]
+  ) => {
+    const ids =
+      images
+        .map((image) => image.id)
+        .filter(Boolean)
+
+    if (!ids.length) {
+      return
+    }
+
+    setSessionUploadedFileIds(
+      (previous) =>
+        Array.from(
+          new Set([
+            ...previous,
+            ...ids,
+          ])
+        )
+    )
+  }
+
+  const deleteUploadedFile =
+    async (fileId: string) => {
+      try {
+        await sdk.admin.upload.delete(
+          fileId
+        )
+      } catch (error) {
+        /*
+         * A failed create route may already have cleaned
+         * the file. Treat 404/already-deleted as harmless.
+         */
+        console.warn(
+          `Could not clean uploaded file ${fileId}:`,
+          error
+        )
+      }
+    }
+
+  const cleanupSessionUploads =
+    async () => {
+      const ids = [
+        ...sessionUploadedFileIds,
+      ]
+
+      if (!ids.length) {
+        return
+      }
+
+      await Promise.allSettled(
+        ids.map((id) =>
+          deleteUploadedFile(id)
+        )
+      )
+
+      setSessionUploadedFileIds([])
+
+      const idSet = new Set(ids)
+
+      setUploadedImages(
+        (previous) =>
+          previous.filter(
+            (image) =>
+              !idSet.has(image.id)
+          )
+      )
+
+      setMainCardImage(
+        (current) =>
+          current &&
+          idSet.has(current.id)
+            ? null
+            : current
+      )
+
+      setHoverCardImage(
+        (current) =>
+          current &&
+          idSet.has(current.id)
+            ? null
+            : current
+      )
+
+      setColorImageMap(
+        (previous) =>
+          Object.fromEntries(
+            Object.entries(
+              previous
+            ).map(
+              ([color, imageIds]) => [
+                color,
+                imageIds.filter(
+                  (id) =>
+                    !idSet.has(id)
+                ),
+              ]
+            )
+          )
+      )
+
+      setColorSwatchMap(
+        (previous) =>
+          Object.fromEntries(
+            Object.entries(
+              previous
+            ).filter(
+              ([, swatch]) =>
+                !idSet.has(
+                  swatch.image_id
+                )
+            )
+          )
+      )
+    }
+
   /*
    * Upload product images using Medusa's Admin Upload API.
    */
@@ -2552,6 +3054,10 @@ const ProductBuilderPage = () => {
             url: file.url,
           })
         )
+
+      registerSessionUploads(
+        newImages
+      )
 
       setUploadedImages(
         (previous) => {
@@ -2616,6 +3122,10 @@ const ProductBuilderPage = () => {
         id: uploaded.id,
         url: uploaded.url,
       }
+
+      registerSessionUploads([
+        nextImage,
+      ])
 
       setUploadedImages((previous) => {
         const withoutDuplicate =
@@ -2810,9 +3320,14 @@ const ProductBuilderPage = () => {
     await uploadFiles(files)
   }
 
-  const removeImage = (
+  const removeImage = async (
     imageId: string
   ) => {
+    const isNewUpload =
+      sessionUploadedFileIds.includes(
+        imageId
+      )
+
     setHoverCardImage(
       (current) =>
         current?.id === imageId
@@ -2876,6 +3391,20 @@ const ProductBuilderPage = () => {
         return next
       }
     )
+
+    if (isNewUpload) {
+      setSessionUploadedFileIds(
+        (previous) =>
+          previous.filter(
+            (id) =>
+              id !== imageId
+          )
+      )
+
+      await deleteUploadedFile(
+        imageId
+      )
+    }
   }
 
   /*
@@ -3082,44 +3611,11 @@ const ProductBuilderPage = () => {
       .replace(/\s+/g, " ")
   }
 
-  const PRODUCT_STOP_WORDS =
-    new Set([
-      "THE",
-      "AND",
-      "FOR",
-      "WITH",
-      "OF",
-      "A",
-      "AN",
-    ])
-
-  const getProductSkuCode = (
-    value: string
-  ) => {
-    const words =
-      cleanSkuText(value)
-        .split(" ")
-        .filter(Boolean)
-        .filter(
-          (word) =>
-            !PRODUCT_STOP_WORDS.has(
-              word
-            )
-        )
-
-    if (!words.length) {
-      return "PRD"
-    }
-
-    if (words.length === 1) {
-      return words[0].slice(0, 3)
-    }
-
-    return words
-      .slice(0, 4)
-      .map((word) => word[0])
-      .join("")
-  }
+  /*
+   * SKU identity intentionally does NOT depend on product title.
+   * A random product code is generated once for create mode, while
+   * edit mode preserves each existing variant SKU.
+   */
 
   const COLOR_SKU_CODES:
     Record<string, string> = {
@@ -3200,10 +3696,19 @@ const ProductBuilderPage = () => {
     color: string,
     size: string
   ) => {
-    const productCode =
-      getProductSkuCode(
-        title || handle
-      )
+    if (builderMode === "edit") {
+      const existingSku =
+        existingVariantSkuMap[
+          getVariantKey(
+            color,
+            size
+          )
+        ]
+
+      if (existingSku) {
+        return existingSku
+      }
+    }
 
     const colorCode =
       getColorSkuCode(color)
@@ -3212,7 +3717,8 @@ const ProductBuilderPage = () => {
       getSizeSkuCode(size)
 
     return [
-      productCode,
+      "SAF",
+      skuProductCode,
       colorCode,
       sizeCode,
     ]
@@ -3327,8 +3833,9 @@ const ProductBuilderPage = () => {
       selectedColors,
       selectedSizes,
       defaultStock,
-      handle,
-      title,
+      builderMode,
+      skuProductCode,
+      existingVariantSkuMap,
     ])
 
   /*
@@ -3426,9 +3933,19 @@ const ProductBuilderPage = () => {
             mainCardImage?.url ??
             uploadedImages[0]?.url,
           metadata: {
+            showcase_primary_image_id:
+              mainCardImage?.id ??
+              uploadedImages[0]?.id ??
+              "",
             showcase_primary_image_url:
               mainCardImage?.url ??
               uploadedImages[0]?.url ??
+              "",
+            showcase_flip_image_id:
+              hoverCardImage?.id ??
+              uploadedImages[1]?.id ??
+              mainCardImage?.id ??
+              uploadedImages[0]?.id ??
               "",
             showcase_flip_image_url:
               hoverCardImage?.url ??
@@ -3497,6 +4014,13 @@ const ProductBuilderPage = () => {
           tag_ids:
             selectedTagIds,
           discountable,
+          ...(builderMode ===
+          "create"
+            ? {
+                uploaded_file_ids:
+                  sessionUploadedFileIds,
+              }
+            : {}),
           options: [
             {
               id:
@@ -3593,13 +4117,14 @@ const ProductBuilderPage = () => {
           await response.json()
 
         if (!response.ok) {
-          const message =
-            data?.message ||
-            data?.error ||
-            builderMode === "edit"
-                ? "Medusa could not update the product."
-                : "Medusa could not create the product."
-
+         const message =
+           data?.message ||
+           data?.error ||
+           (
+             builderMode === "edit"
+               ? "Medusa could not update the product."
+               : "Medusa could not create the product."
+            )
           throw new Error(
             typeof message ===
               "string"
@@ -3624,10 +4149,19 @@ const ProductBuilderPage = () => {
          * We will configure prices/inventory there or
          * extend this builder in the next step.
          */
+        setSessionUploadedFileIds([])
+
         window.location.assign(
           `/app/products/${product.id}`
         )
       } catch (error) {
+        if (
+          builderMode ===
+          "create"
+        ) {
+          await cleanupSessionUploads()
+        }
+
         console.error(
           builderMode === "edit"
             ? "Failed updating product:"
@@ -4658,9 +5192,18 @@ const ProductBuilderPage = () => {
                                   event.target.value
                                 )
                               }
-                              className="mt-2 w-full rounded-md border border-ui-border-base bg-ui-bg-field px-3 py-2 text-sm outline-none transition focus:border-ui-border-interactive"
+                              className={
+                                NATIVE_SELECT_CLASS
+                              }
+                              style={{
+                                colorScheme:
+                                  "light",
+                              }}
                             >
-                              <option value="">
+                              <option
+                                value=""
+                                className="bg-white text-black"
+                              >
                                 Choose an assigned image...
                               </option>
 
@@ -4677,6 +5220,7 @@ const ProductBuilderPage = () => {
                                     <option
                                       key={image.id}
                                       value={image.id}
+                                      className="bg-white text-black"
                                     >
                                       Image #{imageIndex + 1}
                                     </option>
@@ -4684,6 +5228,37 @@ const ProductBuilderPage = () => {
                                 }
                               )}
                             </select>
+
+                            {swatch && (
+                              <div className="mt-3 flex items-center gap-3 rounded-md border border-ui-border-base bg-white p-2 text-black">
+                                <img
+                                  src={
+                                    swatch.image_url
+                                  }
+                                  alt={`${color} swatch source`}
+                                  className="h-12 w-10 shrink-0 rounded object-cover"
+                                />
+                                <div className="min-w-0">
+                                  <Text className="font-medium text-black">
+                                    Selected swatch source
+                                  </Text>
+                                  <Text className="truncate text-ui-fg-muted">
+                                    {(() => {
+                                      const index =
+                                        uploadedImages.findIndex(
+                                          (item) =>
+                                            item.id ===
+                                            swatch.image_id
+                                        )
+
+                                      return index >= 0
+                                        ? `Image #${index + 1}`
+                                        : "Assigned image"
+                                    })()}
+                                  </Text>
+                                </div>
+                              </div>
+                            )}
                           </div>
 
                           {swatch && (
@@ -5014,7 +5589,7 @@ const ProductBuilderPage = () => {
               Automatic settings
             </Text>
 
-            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+            <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2 xl:grid-cols-4">
               <div>
                 <Text className="text-ui-fg-muted">
                   Managed Inventory
@@ -5034,6 +5609,18 @@ const ProductBuilderPage = () => {
                   Inventory Kit
                 </Text>
                 <Text>Off</Text>
+              </div>
+
+              <div>
+                <Text className="text-ui-fg-muted">
+                  SKU Product Code
+                </Text>
+                <Text className="font-mono text-xs">
+                  {builderMode ===
+                  "create"
+                    ? `SAF-${skuProductCode}`
+                    : "Existing SKUs preserved"}
+                </Text>
               </div>
             </div>
           </div>
@@ -5105,7 +5692,7 @@ const ProductBuilderPage = () => {
         </Heading>
 
         <Text className="text-ui-fg-subtle">
-          Organize this product using Medusa types, collections, categories, tags, shipping, and sales channels.
+          Choose the product type, collection, category tree, and tags. Shipping and sales-channel defaults stay available under Advanced.
         </Text>
 
         {organizeError && (
@@ -5115,7 +5702,6 @@ const ProductBuilderPage = () => {
         )}
 
         <div className="mt-5 grid gap-5 lg:grid-cols-2">
-          {/* TYPE */}
           <div>
             <Label htmlFor="product-type">
               Product Type
@@ -5130,9 +5716,17 @@ const ProductBuilderPage = () => {
                   event.target.value
                 )
               }
-              className="mt-2 h-9 w-full rounded-md border border-ui-border-base bg-white px-3 text-sm text-black outline-none transition focus:border-ui-border-interactive disabled:opacity-60"
+              className={
+                NATIVE_SELECT_CLASS
+              }
+              style={{
+                colorScheme: "light",
+              }}
             >
-              <option value="" className="bg-white text-black">
+              <option
+                value=""
+                className="bg-white text-black"
+              >
                 No product type
               </option>
 
@@ -5150,7 +5744,6 @@ const ProductBuilderPage = () => {
             </select>
           </div>
 
-          {/* COLLECTION */}
           <div>
             <Label htmlFor="product-collection">
               Collection
@@ -5167,9 +5760,17 @@ const ProductBuilderPage = () => {
                   event.target.value
                 )
               }
-              className="mt-2 h-9 w-full rounded-md border border-ui-border-base bg-white px-3 text-sm text-black outline-none transition focus:border-ui-border-interactive disabled:opacity-60"
+              className={
+                NATIVE_SELECT_CLASS
+              }
+              style={{
+                colorScheme: "light",
+              }}
             >
-              <option value="" className="bg-white text-black">
+              <option
+                value=""
+                className="bg-white text-black"
+              >
                 No collection
               </option>
 
@@ -5192,99 +5793,26 @@ const ProductBuilderPage = () => {
               )}
             </select>
           </div>
-
-          {/* SHIPPING */}
-          <div>
-            <Label htmlFor="shipping-profile">
-              Shipping Profile
-            </Label>
-
-            <select
-              id="shipping-profile"
-              value={
-                selectedShippingProfileId
-              }
-              disabled={organizeLoading}
-              onChange={(event) =>
-                setSelectedShippingProfileId(
-                  event.target.value
-                )
-              }
-              className="mt-2 h-9 w-full rounded-md border border-ui-border-base bg-white px-3 text-sm text-black outline-none transition focus:border-ui-border-interactive disabled:opacity-60"
-            >
-              <option value="" className="bg-white text-black">
-                {organizeLoading
-                  ? "Loading..."
-                  : "Select shipping profile"}
-              </option>
-
-              {shippingProfiles.map(
-                (profile) => (
-                  <option
-                    className="bg-white text-black"
-                    key={profile.id}
-                    value={profile.id}
-                  >
-                    {profile.name}
-                  </option>
-                )
-              )}
-            </select>
-          </div>
-
-          {/* SALES CHANNEL */}
-          <div>
-            <Label htmlFor="sales-channel">
-              Sales Channel
-            </Label>
-
-            <select
-              id="sales-channel"
-              value={
-                selectedSalesChannelId
-              }
-              disabled={organizeLoading}
-              onChange={(event) =>
-                setSelectedSalesChannelId(
-                  event.target.value
-                )
-              }
-              className="mt-2 h-9 w-full rounded-md border border-ui-border-base bg-white px-3 text-sm text-black outline-none transition focus:border-ui-border-interactive disabled:opacity-60"
-            >
-              <option value="" className="bg-white text-black">
-                {organizeLoading
-                  ? "Loading..."
-                  : "Select sales channel"}
-              </option>
-
-              {salesChannels.map(
-                (channel) => (
-                  <option
-                    className="bg-white text-black"
-                    key={channel.id}
-                    value={channel.id}
-                  >
-                    {channel.name}
-                    {channel.is_disabled
-                      ? " (Disabled)"
-                      : ""}
-                  </option>
-                )
-              )}
-            </select>
-          </div>
         </div>
 
-        {/* CATEGORIES */}
+        {/* CATEGORY TREE */}
         <div className="mt-6">
-          <Label htmlFor="category-search">
-            Categories
-          </Label>
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="category-search">
+              Categories
+            </Label>
+
+            {!!selectedCategoryIds.length && (
+              <Text className="text-ui-fg-muted">
+                {selectedCategoryIds.length} selected
+              </Text>
+            )}
+          </div>
 
           <Input
             id="category-search"
             className="mt-2"
-            placeholder="Search categories..."
+            placeholder="Search category or full path..."
             value={categorySearch}
             onChange={(event) =>
               setCategorySearch(
@@ -5298,10 +5826,7 @@ const ProductBuilderPage = () => {
               {selectedCategoryIds.map(
                 (id) => {
                   const category =
-                    categories.find(
-                      (item) =>
-                        item.id === id
-                    )
+                    categoryById.get(id)
 
                   if (!category) {
                     return null
@@ -5314,9 +5839,13 @@ const ProductBuilderPage = () => {
                       onClick={() =>
                         toggleCategory(id)
                       }
+                      title="Remove category"
                     >
                       <Badge color="blue">
-                        {category.name} ×
+                        {categoryPathById.get(
+                          id
+                        ) ?? category.name}{" "}
+                        ×
                       </Badge>
                     </button>
                   )
@@ -5325,39 +5854,73 @@ const ProductBuilderPage = () => {
             </div>
           )}
 
-          <div className="mt-3 max-h-[220px] overflow-y-auto rounded-md border border-ui-border-base">
-            {filteredCategories.map(
-              (category) => {
-                const selected =
-                  selectedCategoryIds.includes(
-                    category.id
-                  )
-
-                return (
-                  <button
-                    key={category.id}
-                    type="button"
-                    onClick={() =>
-                      toggleCategory(
+          <div className="mt-3 max-h-[340px] overflow-y-auto rounded-md border border-ui-border-base bg-ui-bg-base">
+            {categorySearch.trim() ? (
+              categorySearchResults.length ? (
+                categorySearchResults.map(
+                  (category) => {
+                    const selected =
+                      selectedCategoryIds.includes(
                         category.id
                       )
-                    }
-                    className="flex w-full items-center justify-between border-b border-ui-border-base px-4 py-3 text-left last:border-b-0 hover:bg-ui-bg-subtle"
-                  >
-                    <span>
-                      {category.name}
-                    </span>
 
-                    <span>
-                      {selected
-                        ? "✓"
-                        : ""}
-                    </span>
-                  </button>
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        onClick={() =>
+                          toggleCategory(
+                            category.id
+                          )
+                        }
+                        className="flex w-full items-center justify-between gap-3 border-b border-ui-border-base px-4 py-3 text-left last:border-b-0 hover:bg-ui-bg-subtle"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">
+                            {category.name}
+                          </span>
+                          <span className="block truncate text-xs text-ui-fg-muted">
+                            {categoryPathById.get(
+                              category.id
+                            )}
+                          </span>
+                        </span>
+
+                        <span
+                          className={
+                            selected
+                              ? "font-semibold text-ui-fg-interactive"
+                              : "text-ui-fg-muted"
+                          }
+                        >
+                          {selected ? "✓" : ""}
+                        </span>
+                      </button>
+                    )
+                  }
                 )
-              }
+              ) : (
+                <Text className="p-4 text-ui-fg-muted">
+                  No categories match this search.
+                </Text>
+              )
+            ) : rootCategories.length ? (
+              rootCategories.map(
+                (category) =>
+                  renderCategoryTreeNode(
+                    category
+                  )
+              )
+            ) : (
+              <Text className="p-4 text-ui-fg-muted">
+                No categories available.
+              </Text>
             )}
           </div>
+
+          <Text className="mt-2 text-ui-fg-muted">
+            Expand only the branch you need. Search results show the complete parent → child path.
+          </Text>
         </div>
 
         {/* TAGS */}
@@ -5410,63 +5973,187 @@ const ProductBuilderPage = () => {
             </div>
           )}
 
-          <div className="mt-3 max-h-[220px] overflow-y-auto rounded-md border border-ui-border-base">
-            {filteredTags.map(
-              (tag) => {
-                const selected =
-                  selectedTagIds.includes(
-                    tag.id
+          {!!tagSearch.trim() && (
+            <div className="mt-3 max-h-[220px] overflow-y-auto rounded-md border border-ui-border-base">
+              {filteredTags.map(
+                (tag) => {
+                  const selected =
+                    selectedTagIds.includes(
+                      tag.id
+                    )
+
+                  return (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() =>
+                        toggleTag(
+                          tag.id
+                        )
+                      }
+                      className="flex w-full items-center justify-between border-b border-ui-border-base px-4 py-3 text-left last:border-b-0 hover:bg-ui-bg-subtle"
+                    >
+                      <span>
+                        {tag.value}
+                      </span>
+                      <span>
+                        {selected
+                          ? "✓"
+                          : ""}
+                      </span>
+                    </button>
                   )
-
-                return (
-                  <button
-                    key={tag.id}
-                    type="button"
-                    onClick={() =>
-                      toggleTag(
-                        tag.id
-                      )
-                    }
-                    className="flex w-full items-center justify-between border-b border-ui-border-base px-4 py-3 text-left last:border-b-0 hover:bg-ui-bg-subtle"
-                  >
-                    <span>
-                      {tag.value}
-                    </span>
-
-                    <span>
-                      {selected
-                        ? "✓"
-                        : ""}
-                    </span>
-                  </button>
-                )
-              }
-            )}
-          </div>
+                }
+              )}
+            </div>
+          )}
         </div>
 
-        {/* DISCOUNTABLE */}
-        <label className="mt-6 flex cursor-pointer items-center gap-3 rounded-lg border border-ui-border-base p-4">
-          <input
-            type="checkbox"
-            checked={discountable}
-            onChange={(event) =>
-              setDiscountable(
-                event.target.checked
+        {/* ADVANCED ORGANIZE */}
+        <div className="mt-6 rounded-lg border border-ui-border-base">
+          <button
+            type="button"
+            onClick={() =>
+              setShowAdvancedOrganize(
+                (current) => !current
               )
             }
-          />
+            className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-ui-bg-subtle"
+          >
+            <div>
+              <Text className="font-medium">
+                Advanced organization
+              </Text>
+              <Text className="text-ui-fg-muted">
+                Shipping profile, sales channel, and discount settings
+              </Text>
+            </div>
+            <span className="text-ui-fg-muted">
+              {showAdvancedOrganize
+                ? "▾"
+                : "▸"}
+            </span>
+          </button>
 
-          <div>
-            <Text className="font-medium">
-              Discountable
-            </Text>
+          {showAdvancedOrganize && (
+            <div className="border-t border-ui-border-base p-4">
+              <div className="grid gap-5 lg:grid-cols-2">
+                <div>
+                  <Label htmlFor="shipping-profile">
+                    Shipping Profile
+                  </Label>
+                  <select
+                    id="shipping-profile"
+                    value={
+                      selectedShippingProfileId
+                    }
+                    disabled={organizeLoading}
+                    onChange={(event) =>
+                      setSelectedShippingProfileId(
+                        event.target.value
+                      )
+                    }
+                    className={
+                      NATIVE_SELECT_CLASS
+                    }
+                    style={{
+                      colorScheme:
+                        "light",
+                    }}
+                  >
+                    <option
+                      value=""
+                      className="bg-white text-black"
+                    >
+                      {organizeLoading
+                        ? "Loading..."
+                        : "Select shipping profile"}
+                    </option>
+                    {shippingProfiles.map(
+                      (profile) => (
+                        <option
+                          className="bg-white text-black"
+                          key={profile.id}
+                          value={profile.id}
+                        >
+                          {profile.name}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </div>
 
-            <Text className="text-ui-fg-muted">
-              Allow promotions and discounts to apply to this product.
-            </Text>
-          </div>
-        </label>
+                <div>
+                  <Label htmlFor="sales-channel">
+                    Sales Channel
+                  </Label>
+                  <select
+                    id="sales-channel"
+                    value={
+                      selectedSalesChannelId
+                    }
+                    disabled={organizeLoading}
+                    onChange={(event) =>
+                      setSelectedSalesChannelId(
+                        event.target.value
+                      )
+                    }
+                    className={
+                      NATIVE_SELECT_CLASS
+                    }
+                    style={{
+                      colorScheme:
+                        "light",
+                    }}
+                  >
+                    <option
+                      value=""
+                      className="bg-white text-black"
+                    >
+                      {organizeLoading
+                        ? "Loading..."
+                        : "Select sales channel"}
+                    </option>
+                    {salesChannels.map(
+                      (channel) => (
+                        <option
+                          className="bg-white text-black"
+                          key={channel.id}
+                          value={channel.id}
+                        >
+                          {channel.name}
+                          {channel.is_disabled
+                            ? " (Disabled)"
+                            : ""}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </div>
+              </div>
+
+              <label className="mt-5 flex cursor-pointer items-center gap-3 rounded-lg border border-ui-border-base p-4">
+                <input
+                  type="checkbox"
+                  checked={discountable}
+                  onChange={(event) =>
+                    setDiscountable(
+                      event.target.checked
+                    )
+                  }
+                />
+                <div>
+                  <Text className="font-medium">
+                    Discountable
+                  </Text>
+                  <Text className="text-ui-fg-muted">
+                    Allow promotions and discounts to apply to this product.
+                  </Text>
+                </div>
+              </label>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* STYLE WITH */}

@@ -6,7 +6,11 @@ import {
   createInventoryItemsWorkflow,
   createProductsWorkflow,
   deleteInventoryItemWorkflow,
+  updateProductsWorkflow,
 } from "@medusajs/medusa/core-flows"
+import {
+  Modules,
+} from "@medusajs/framework/utils"
 
 type BuilderOption = {
   id: string
@@ -56,6 +60,7 @@ type CreateBuilderProductBody = {
     string,
     ColorImage[]
   >
+  uploaded_file_ids?: string[]
 }
 
 export async function POST(
@@ -81,6 +86,105 @@ export async function POST(
 
   const query =
     req.scope.resolve("query")
+
+  /*
+   * Validate the create request before creating inventory or product data.
+   * This prevents the duplicate-SKU orphan problem that can otherwise
+   * leave inventory items behind after a failed Product Builder attempt.
+   */
+  const requestedSkus =
+    body.variants.map(
+      (variant) =>
+        variant.sku
+          ?.trim()
+          .toUpperCase() ??
+        ""
+    )
+
+  if (
+    requestedSkus.some(
+      (sku) => !sku
+    )
+  ) {
+    return res.status(400).json({
+      message:
+        "Every generated variant must have a SKU.",
+    })
+  }
+
+  if (
+    new Set(requestedSkus).size !==
+    requestedSkus.length
+  ) {
+    return res.status(409).json({
+      message:
+        "Two or more generated variants have the same SKU. Change the product selections and try again.",
+    })
+  }
+
+  const { data: existingHandleProducts } =
+    await query.graph({
+      entity: "product",
+      fields: [
+        "id",
+        "title",
+        "handle",
+      ],
+      filters: {
+        handle:
+          body.handle,
+      },
+    })
+
+  if (existingHandleProducts.length) {
+    return res.status(409).json({
+      message:
+        `A product with handle "${body.handle}" already exists. Change the product handle and try again.`,
+    })
+  }
+
+  for (const sku of requestedSkus) {
+    const { data: inventoryMatches } =
+      await query.graph({
+        entity: "inventory_item",
+        fields: [
+          "id",
+          "sku",
+          "title",
+        ],
+        filters: {
+          sku,
+        },
+      })
+
+    if (inventoryMatches.length) {
+      return res.status(409).json({
+        message:
+          `SKU ${sku} is already in use by an inventory item. Product creation was stopped before any new inventory was created.`,
+      })
+    }
+
+    const { data: variantMatches } =
+      await query.graph({
+        entity: "product_variant",
+        fields: [
+          "id",
+          "sku",
+          "title",
+          "product_id",
+        ],
+        filters: {
+          sku,
+        },
+      })
+
+    if (variantMatches.length) {
+      return res.status(409).json({
+        message:
+          `SKU ${sku} is already used by an existing product variant. Product creation was stopped before any new inventory was created.`,
+      })
+    }
+  }
 
   /*
    * Inventory in Medusa is location-based.
@@ -144,6 +248,8 @@ export async function POST(
         id: string
       }[]
     | undefined
+
+  let createdProductId = ""
 
   try {
     const inventoryResult =
@@ -274,6 +380,131 @@ export async function POST(
         "Product creation finished without returning a product ID."
       )
     }
+
+    createdProductId =
+      product.id
+
+    /*
+     * Resolve the ProductImage IDs that Medusa created from the uploaded
+     * URLs. Upload file IDs and ProductImage IDs are different entities,
+     * so normalize storefront metadata to stable ProductImage IDs here.
+     */
+    const { data: productsWithImages } =
+      await query.graph({
+        entity: "product",
+        filters: {
+          id: product.id,
+        },
+        fields: [
+          "id",
+          "images.id",
+          "images.url",
+        ],
+      })
+
+    const normalizedProductImages =
+      productsWithImages[0]?.images ?? []
+
+    const productImageIdByUrlForMetadata =
+      new Map<string, string>()
+
+    for (const image of normalizedProductImages) {
+      if (image?.url && image?.id) {
+        productImageIdByUrlForMetadata.set(
+          image.url,
+          image.id
+        )
+      }
+    }
+
+    const incomingMetadata =
+      body.metadata ?? {}
+
+    const primaryImageUrl =
+      typeof incomingMetadata.showcase_primary_image_url ===
+      "string"
+        ? incomingMetadata.showcase_primary_image_url
+        : body.thumbnail ?? ""
+
+    const flipImageUrl =
+      typeof incomingMetadata.showcase_flip_image_url ===
+      "string"
+        ? incomingMetadata.showcase_flip_image_url
+        : ""
+
+    const rawSwatches =
+      incomingMetadata.showcase_color_swatches
+
+    const normalizedSwatches:
+      Record<string, unknown> = {}
+
+    if (
+      rawSwatches &&
+      typeof rawSwatches === "object" &&
+      !Array.isArray(rawSwatches)
+    ) {
+      for (const [color, rawValue] of Object.entries(
+        rawSwatches as Record<string, unknown>
+      )) {
+        if (
+          !rawValue ||
+          typeof rawValue !== "object" ||
+          Array.isArray(rawValue)
+        ) {
+          continue
+        }
+
+        const swatch =
+          rawValue as Record<string, unknown>
+
+        const imageUrl =
+          typeof swatch.image_url === "string"
+            ? swatch.image_url
+            : ""
+
+        normalizedSwatches[color] = {
+          ...swatch,
+          image_id:
+            productImageIdByUrlForMetadata.get(
+              imageUrl
+            ) ?? "",
+          image_url:
+            imageUrl,
+        }
+      }
+    }
+
+    const normalizedMetadata = {
+      ...incomingMetadata,
+      showcase_primary_image_id:
+        productImageIdByUrlForMetadata.get(
+          primaryImageUrl
+        ) ?? "",
+      showcase_primary_image_url:
+        primaryImageUrl,
+      showcase_flip_image_id:
+        productImageIdByUrlForMetadata.get(
+          flipImageUrl
+        ) ?? "",
+      showcase_flip_image_url:
+        flipImageUrl,
+      showcase_color_swatches:
+        normalizedSwatches,
+    }
+
+    await updateProductsWorkflow(
+      req.scope
+    ).run({
+      input: {
+        products: [
+          {
+            id: product.id,
+            metadata:
+              normalizedMetadata,
+          },
+        ],
+      },
+    })
 
     /*
      * Medusa 2.11.2+ stores variant-image associations
@@ -561,10 +792,70 @@ export async function POST(
       }
     }
 
+    /*
+     * Product creation is fully complete at this point:
+     * - product + variants exist
+     * - stable ProductImage IDs are stored in metadata
+     * - color/variant media associations were verified
+     *
+     * Only now ask the media organizer to move R2 objects.
+     * The organizer is deliberately NOT attached to
+     * product.created/product.updated anymore.
+     *
+     * Organizer failure must never turn a successfully
+     * created product into a failed Product Builder request.
+     */
+    try {
+      const eventBus =
+        req.scope.resolve(
+          Modules.EVENT_BUS
+        )
+
+      await eventBus.emit({
+        name:
+          "safafi.product-media.organize",
+        data: {
+          id:
+            product.id,
+        },
+      })
+    } catch (
+      organizerEventError
+    ) {
+      console.error(
+        `Product ${product.id} was created successfully, but the media organizer event could not be emitted:`,
+        organizerEventError
+      )
+    }
+
     return res.status(200).json({
       product,
     })
   } catch (error) {
+    /*
+     * If a later step (for example variant-image association) fails
+     * after the product was created, remove that partial product first.
+     * Medusa's Product Module service is used here as a compensation
+     * action so retries don't collide with an existing handle/variants.
+     */
+    if (createdProductId) {
+      try {
+        const productModuleService =
+          req.scope.resolve(
+            Modules.PRODUCT
+          )
+
+        await productModuleService.deleteProducts(
+          [createdProductId]
+        )
+      } catch (productCleanupError) {
+        console.error(
+          `Failed cleaning up partially created product ${createdProductId}:`,
+          productCleanupError
+        )
+      }
+    }
+
     /*
      * If product creation fails after inventory creation,
      * clean up the inventory items to avoid orphan records.
