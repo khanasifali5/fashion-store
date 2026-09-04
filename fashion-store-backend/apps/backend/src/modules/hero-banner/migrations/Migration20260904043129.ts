@@ -1,0 +1,13 @@
+import { Migration } from "@medusajs/framework/mikro-orm/migrations";
+
+export class Migration20260904043129 extends Migration {
+
+  override async up(): Promise<void> {
+    this.addSql(`alter table if exists "hero_banner" add column if not exists "poster_url" text null, add column if not exists "mobile_poster_url" text null, add column if not exists "media_alt" text null, add column if not exists "mobile_media_alt" text null, add column if not exists "desktop_focal_x" integer not null default 50, add column if not exists "desktop_focal_y" integer not null default 50, add column if not exists "mobile_focal_x" integer null, add column if not exists "mobile_focal_y" integer null, add column if not exists "mobile_typography_override" boolean not null default false, add column if not exists "content_max_width" integer not null default 620, add column if not exists "mobile_text_align" text null, add column if not exists "mobile_vertical_position" text null, add column if not exists "mobile_horizontal_position" text null, add column if not exists "mobile_content_offset_x" integer null, add column if not exists "mobile_content_offset_y" integer null, add column if not exists "mobile_content_max_width" integer not null default 340, add column if not exists "button_style" text not null default 'filled', add column if not exists "secondary_button_style" text not null default 'outline', add column if not exists "overlay_type" text not null default 'solid', add column if not exists "overlay_direction" text not null default 'full', add column if not exists "starts_at" timestamptz null, add column if not exists "ends_at" timestamptz null;`);
+  }
+
+  override async down(): Promise<void> {
+    this.addSql(`alter table if exists "hero_banner" drop column if exists "poster_url", drop column if exists "mobile_poster_url", drop column if exists "media_alt", drop column if exists "mobile_media_alt", drop column if exists "desktop_focal_x", drop column if exists "desktop_focal_y", drop column if exists "mobile_focal_x", drop column if exists "mobile_focal_y", drop column if exists "mobile_typography_override", drop column if exists "content_max_width", drop column if exists "mobile_text_align", drop column if exists "mobile_vertical_position", drop column if exists "mobile_horizontal_position", drop column if exists "mobile_content_offset_x", drop column if exists "mobile_content_offset_y", drop column if exists "mobile_content_max_width", drop column if exists "button_style", drop column if exists "secondary_button_style", drop column if exists "overlay_type", drop column if exists "overlay_direction", drop column if exists "starts_at", drop column if exists "ends_at";`);
+  }
+
+}

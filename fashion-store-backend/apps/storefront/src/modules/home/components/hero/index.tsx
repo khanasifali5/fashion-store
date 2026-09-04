@@ -4,16 +4,112 @@ import HeroSlider, {
   type HeroBanner,
 } from "./hero-slider"
 
+const getTimestamp = (
+  value?: string | Date | null
+) => {
+  if (!value) {
+    return null
+  }
+
+  const timestamp =
+    new Date(value).getTime()
+
+  return Number.isFinite(timestamp)
+    ? timestamp
+    : null
+}
+
+const isCurrentlyPublished = (
+  banner: HeroBanner,
+  now: number
+) => {
+  if (
+    banner.is_active === false ||
+    !banner.media_url
+  ) {
+    return false
+  }
+
+  const startsAt =
+    getTimestamp(
+      banner.starts_at
+    )
+
+  const endsAt =
+    getTimestamp(
+      banner.ends_at
+    )
+
+  if (
+    startsAt !== null &&
+    now < startsAt
+  ) {
+    return false
+  }
+
+  if (
+    endsAt !== null &&
+    now > endsAt
+  ) {
+    return false
+  }
+
+  return true
+}
+
+const getDesktopPreload = (
+  banner: HeroBanner
+) => {
+  if (
+    banner.media_type ===
+    "image"
+  ) {
+    return banner.media_url
+  }
+
+  return (
+    banner.poster_url ||
+    null
+  )
+}
+
+const getMobilePreload = (
+  banner: HeroBanner
+) => {
+  /*
+   * Dedicated mobile artwork.
+   */
+  if (
+    banner.mobile_media_url
+  ) {
+    if (
+      banner.mobile_media_type ===
+      "image"
+    ) {
+      return banner.mobile_media_url
+    }
+
+    return (
+      banner.mobile_poster_url ||
+      banner.poster_url ||
+      null
+    )
+  }
+
+  /*
+   * Mobile inherits desktop artwork.
+   */
+  return getDesktopPreload(
+    banner
+  )
+}
+
 /*
  * SERVER-FIRST HERO
  *
- * The old Hero rendered in the browser, then fetched:
- * /store/hero-banners
- *
- * That guaranteed a blank/loading hero on every page load.
- *
- * Now Medusa data is resolved on the server BEFORE HeroSlider
- * is sent to the browser.
+ * Medusa Hero data is resolved before HeroSlider reaches
+ * the browser, so the page doesn't first render an empty
+ * client-side Hero shell.
  */
 const Hero = async () => {
   try {
@@ -27,13 +123,15 @@ const Hero = async () => {
           method: "GET",
 
           /*
-           * Keep Admin changes immediately visible.
-           * We remove the visual client-fetch lag without
-           * introducing stale hero content.
+           * Hero publishing / Admin edits should be visible
+           * immediately.
            */
           cache: "no-store",
         }
       )
+
+    const now =
+      Date.now()
 
     const slides =
       (
@@ -42,10 +140,9 @@ const Hero = async () => {
       )
         .filter(
           (banner) =>
-            banner.is_active !==
-              false &&
-            Boolean(
-              banner.media_url
+            isCurrentlyPublished(
+              banner,
+              now
             )
         )
         .sort(
@@ -61,23 +158,63 @@ const Hero = async () => {
     const first =
       slides[0]
 
+    const desktopPreload =
+      getDesktopPreload(
+        first
+      )
+
+    const mobilePreload =
+      getMobilePreload(
+        first
+      )
+
+    const samePreload =
+      Boolean(
+        desktopPreload &&
+        mobilePreload &&
+        desktopPreload ===
+          mobilePreload
+      )
+
     return (
       <>
-        {/*
-         * Start downloading the first hero image as early
-         * as possible. HeroSlider also marks it eager/high.
-         */}
-        {first.media_type ===
-          "image" && (
-          <link
-            rel="preload"
-            as="image"
-            href={
-              first.media_url
-            }
-            fetchPriority="high"
-          />
-        )}
+        {desktopPreload &&
+          samePreload && (
+            <link
+              rel="preload"
+              as="image"
+              href={
+                desktopPreload
+              }
+              fetchPriority="high"
+            />
+          )}
+
+        {desktopPreload &&
+          !samePreload && (
+            <link
+              rel="preload"
+              as="image"
+              href={
+                desktopPreload
+              }
+              media="(min-width: 768px)"
+              fetchPriority="high"
+            />
+          )}
+
+        {mobilePreload &&
+          !samePreload && (
+            <link
+              rel="preload"
+              as="image"
+              href={
+                mobilePreload
+              }
+              media="(max-width: 767px)"
+              fetchPriority="high"
+            />
+          )}
 
         <HeroSlider
           slides={slides}
@@ -91,7 +228,8 @@ const Hero = async () => {
     )
 
     /*
-     * Do not reserve a giant black empty area on failure.
+     * Never reserve a large empty Hero area if the backend
+     * is temporarily unavailable.
      */
     return null
   }

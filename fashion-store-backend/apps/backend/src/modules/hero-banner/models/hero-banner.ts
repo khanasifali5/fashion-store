@@ -3,39 +3,87 @@ import { model } from "@medusajs/framework/utils"
 export const HeroBanner = model.define("hero_banner", {
   id: model.id().primaryKey(),
 
-  // =========================
+  // =========================================================
   // MEDIA
-  // =========================
+  // =========================================================
 
   media_url: model.text(),
 
   media_type: model.text().default("image"),
 
   /*
-   * DESKTOP HERO HEIGHT
-   *
-   * Desktop / narrow-desktop keep this height while width changes.
-   * Media crops with object-cover instead of shrinking the whole
-   * Hero proportionally.
-   */
-  hero_height: model.number().default(720),
-
-  /*
-   * Optional mobile artwork override.
-   * Empty mobile_media_url = reuse desktop media.
+   * Optional dedicated mobile artwork.
+   * Empty = storefront reuses desktop media.
    */
   mobile_media_url: model.text().nullable(),
 
   mobile_media_type: model.text().default("image"),
 
   /*
-   * Mobile frame height used below the mobile breakpoint.
+   * Video poster / loading fallback.
+   */
+  poster_url: model.text().nullable(),
+
+  mobile_poster_url: model.text().nullable(),
+
+  /*
+   * Accessibility text.
+   */
+  media_alt: model.text().nullable(),
+
+  mobile_media_alt: model.text().nullable(),
+
+  // =========================================================
+  // HERO HEIGHT
+  // =========================================================
+
+  /*
+   * Reference / maximum desktop Hero height.
+   *
+   * Storefront will later derive intermediate desktop/tablet
+   * heights fluidly instead of keeping this exact height at
+   * every width.
+   */
+  hero_height: model.number().default(720),
+
+  /*
+   * Mobile Hero reference height.
    */
   mobile_height: model.number().default(540),
 
-  // =========================
+  // =========================================================
+  // MEDIA FOCAL POINT
+  // =========================================================
+
+  /*
+   * Desktop focal point percentages.
+   *
+   * 50 / 50 = center.
+   * Storefront converts these to:
+   * object-position: X% Y%
+   */
+  desktop_focal_x: model.number().default(50),
+
+  desktop_focal_y: model.number().default(50),
+
+  /*
+   * Null means:
+   * use the desktop focal point on mobile.
+   */
+  mobile_focal_x: model.number().nullable(),
+
+  mobile_focal_y: model.number().nullable(),
+
+  /*
+   * Legacy field retained for old banners / API compatibility.
+   *
+   * New Admin will primarily use focal X/Y.
+   */
+  object_position: model.text().default("center"),
+
+  // =========================================================
   // CONTENT
-  // =========================
+  // =========================================================
 
   eyebrow: model.text().nullable(),
 
@@ -43,9 +91,9 @@ export const HeroBanner = model.define("hero_banner", {
 
   subtitle: model.text().nullable(),
 
-  // =========================
+  // =========================================================
   // EYEBROW TYPOGRAPHY
-  // =========================
+  // =========================================================
 
   eyebrow_font_family: model.text().default("Inter"),
 
@@ -63,9 +111,9 @@ export const HeroBanner = model.define("hero_banner", {
 
   eyebrow_line_height: model.number().default(1.2),
 
-  // =========================
+  // =========================================================
   // TITLE TYPOGRAPHY
-  // =========================
+  // =========================================================
 
   title_font_family: model.text().default("Playfair Display"),
 
@@ -78,8 +126,10 @@ export const HeroBanner = model.define("hero_banner", {
   title_size: model.number().default(64),
 
   /*
-   * Legacy field kept for DB/API compatibility.
-   * New Admin stores title_size here as well.
+   * Existing legacy field retained.
+   *
+   * It will become an OPTIONAL mobile override instead of
+   * always mirroring title_size.
    */
   title_mobile_size: model.number().default(38),
 
@@ -89,9 +139,9 @@ export const HeroBanner = model.define("hero_banner", {
 
   title_line_height: model.number().default(1),
 
-  // =========================
+  // =========================================================
   // SUBTITLE TYPOGRAPHY
-  // =========================
+  // =========================================================
 
   subtitle_font_family: model.text().default("Inter"),
 
@@ -104,7 +154,8 @@ export const HeroBanner = model.define("hero_banner", {
   subtitle_size: model.number().default(18),
 
   /*
-   * Legacy field kept for DB/API compatibility.
+   * Existing legacy field retained as an optional
+   * mobile typography override.
    */
   subtitle_mobile_size: model.number().default(15),
 
@@ -114,9 +165,20 @@ export const HeroBanner = model.define("hero_banner", {
 
   subtitle_line_height: model.number().default(1.5),
 
-  // =========================
-  // CONTENT POSITION
-  // =========================
+  /*
+   * IMPORTANT:
+   *
+   * Existing banners currently have mobile title/subtitle
+   * values synchronized with desktop values.
+   *
+   * This flag prevents us from accidentally treating those
+   * legacy values as intentional mobile overrides.
+   */
+  mobile_typography_override: model.boolean().default(false),
+
+  // =========================================================
+  // DESKTOP CONTENT POSITION
+  // =========================================================
 
   text_align: model.text().default("center"),
 
@@ -128,9 +190,33 @@ export const HeroBanner = model.define("hero_banner", {
 
   content_offset_y: model.number().default(0),
 
-  // =========================
+  /*
+   * Keeps large titles from spreading across the whole Hero.
+   */
+  content_max_width: model.number().default(620),
+
+  // =========================================================
+  // MOBILE CONTENT POSITION OVERRIDE
+  // =========================================================
+
+  /*
+   * Null = inherit desktop setting.
+   */
+  mobile_text_align: model.text().nullable(),
+
+  mobile_vertical_position: model.text().nullable(),
+
+  mobile_horizontal_position: model.text().nullable(),
+
+  mobile_content_offset_x: model.number().nullable(),
+
+  mobile_content_offset_y: model.number().nullable(),
+
+  mobile_content_max_width: model.number().default(340),
+
+  // =========================================================
   // PRIMARY BUTTON
-  // =========================
+  // =========================================================
 
   button_text: model.text().nullable(),
 
@@ -142,9 +228,14 @@ export const HeroBanner = model.define("hero_banner", {
 
   button_size: model.number().default(13),
 
-  // =========================
+  /*
+   * filled | outline | text
+   */
+  button_style: model.text().default("filled"),
+
+  // =========================================================
   // SECONDARY BUTTON
-  // =========================
+  // =========================================================
 
   secondary_button_text: model.text().nullable(),
 
@@ -154,27 +245,54 @@ export const HeroBanner = model.define("hero_banner", {
 
   secondary_button_text_color: model.text().default("#FFFFFF"),
 
-  // =========================
-  // MEDIA DISPLAY
-  // =========================
+  /*
+   * filled | outline | text
+   */
+  secondary_button_style: model.text().default("outline"),
 
-  object_position: model.text().default("center"),
-
-  // =========================
+  // =========================================================
   // OVERLAY
-  // =========================
+  // =========================================================
 
   overlay_color: model.text().default("#000000"),
 
   overlay_opacity: model.number().default(10),
 
-  // =========================
+  /*
+   * none
+   * solid
+   * gradient
+   */
+  overlay_type: model.text().default("solid"),
+
+  /*
+   * full
+   * left
+   * right
+   * bottom
+   */
+  overlay_direction: model.text().default("full"),
+
+  // =========================================================
   // SLIDER
-  // =========================
+  // =========================================================
 
   position: model.number().default(0),
 
   is_active: model.boolean().default(true),
 
   autoplay_duration: model.number().default(6000),
+
+  // =========================================================
+  // PUBLISHING / CAMPAIGN SCHEDULING
+  // =========================================================
+
+  /*
+   * Null means no scheduled start/end restriction.
+   *
+   * Store API will later use these together with is_active.
+   */
+  starts_at: model.dateTime().nullable(),
+
+  ends_at: model.dateTime().nullable(),
 })
